@@ -1,33 +1,29 @@
-# Use a Go base image to build the Go server
-FROM golang:1.20 AS build
+# Step 1: Build the application
+FROM golang:1.22.2 AS builder
+
+# Update the package list and install CA certificates
+RUN apt-get update && apt-get install -y ca-certificates
 
 # Set the working directory inside the container
-WORKDIR /app
-
-# Copy the Go module files and download the dependencies
-COPY go.mod go.sum ./
-RUN go mod download
+WORKDIR /go/src/leetcode-server
 
 # Copy the source code into the container
 COPY . .
 
-# Build the Go application
-RUN go build -o server .
+# Update Go modules before building
+RUN go mod tidy
 
-# Create a minimal image to run the Go server
+# Build the application
+RUN go build -o myserver main.go
+
+# Step 2: Create the final image with the binary
 FROM debian:bullseye-slim
 
-# Install necessary dependencies (for example, curl if needed)
-RUN apt-get update && apt-get install -y curl
-
-# Set the working directory inside the container
-WORKDIR /app
-
-# Copy the built Go server from the build stage
-COPY go.mod go.sum ./
+# Copy the binary from the builder stage to the final image
+COPY --from=builder /go/src/leetcode-server/myserver /usr/local/bin/myserver
 
 # Expose the port the server will run on
 EXPOSE 8080
 
-# Run the Go server
-CMD ["./server"]
+# Run the binary as the container's entrypoint
+CMD ["/usr/local/bin/myserver"]
