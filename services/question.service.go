@@ -3,6 +3,7 @@ package questionService
 import (
 	"bytes"
 	"context"
+	"regexp" 
 	"fmt"
 	"io"
 	"archive/tar"   
@@ -170,10 +171,10 @@ func createTar(filePath string, destPath string) (*bytes.Buffer, error) {
 	return buf, nil
 }
 
-func RunTests(funcCode, input, expectedOutput string) error {
+func runTest(funcCode, input, expectedOutput string) (string, error) {
 	funcFile, err := createTempFile(funcCode, "test_func", "py")
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	testCode := fmt.Sprintf(`
@@ -186,24 +187,24 @@ def test_func():
 
 	testFile, err := createTempFile(testCode, "test", "py")
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		return fmt.Errorf("Error creating Docker client: %v", err)
+		return "", fmt.Errorf("Error creating Docker client: %v", err)
 	}
 
 	ctx := context.Background()
 
 	funcTar, err := createTar(funcFile, "app/func.py")
 	if err != nil {
-		return fmt.Errorf("Error creating TAR for function file: %v", err)
+		return "", fmt.Errorf("Error creating TAR for function file: %v", err)
 	}
 
 	testTar, err := createTar(testFile, "app/test.py")
 	if err != nil {
-		return fmt.Errorf("Error creating TAR for test file: %v", err)
+		return "", fmt.Errorf("Error creating TAR for test file: %v", err)
 	}
 
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
@@ -211,39 +212,91 @@ def test_func():
 		Cmd:   []string{"sh", "-c", "pytest app/test.py"},
 	}, nil, nil, nil, "")
 	if err != nil {
-		return fmt.Errorf("Error creating Docker container: %v", err)
+		return "", fmt.Errorf("Error creating Docker container: %v", err)
 	}
 
 	if err := cli.CopyToContainer(ctx, resp.ID, "/app", funcTar, types.CopyToContainerOptions{}); err != nil {
-		return fmt.Errorf("Error copying function file to container: %v", err)
+		return "", fmt.Errorf("Error copying function file to container: %v", err)
 	}
 
 	if err := cli.CopyToContainer(ctx, resp.ID, "/app", testTar, types.CopyToContainerOptions{}); err != nil {
-		return fmt.Errorf("Error copying test file to container: %v", err)
+		return "", fmt.Errorf("Error copying test file to container: %v", err)
 	}
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return fmt.Errorf("Error starting Docker container: %v", err)
+		return "", fmt.Errorf("Error starting Docker container: %v", err)
 	}
 
 	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNextExit)
 	select {
 	case err := <-errCh:
 		if err != nil {
-			return fmt.Errorf("Error waiting for container: %v", err)
+			return "", fmt.Errorf("Error waiting for container: %v", err)
 		}
 	case <-statusCh:
 	}
 
 	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
-		return fmt.Errorf("Error getting container logs: %v", err)
+		return "", fmt.Errorf("Error getting container logs: %v", err)
+	}
+	defer out.Close()
+
+	var buf bytes.Buffer
+	_, err = stdcopy.StdCopy(&buf, os.Stderr, out)
+	if err != nil {
+		return "", fmt.Errorf("Error copying logs: %v", err)
 	}
 
-	defer out.Close()
-	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
-	defer os.Remove(testFile) 
-	defer os.Remove(funcFile) 
+	defer os.Remove(testFile)
+	defer os.Remove(funcFile)
 
-	return nil
+	return buf.String(), nil
+}
+
+type TestResult struct {
+	TestNumber  int    `json:"test_number"`
+	Passed      bool   `json:"passed"`
+	Comments    string `json:"comments"`
+}
+
+func RunTests(funcCode string, questionId string) ([]TestResult, error) {
+	question, err := GetQuestionByID(questionId)
+	if err != nil {
+		return nil, fmt.Errorf("Error fetching question: %v", err)
+	}
+
+	var results []TestResult 
+
+	failureRegex := regexp.MustCompile(`Expected (\d+) but got ([\d\.]+)`)
+
+	for i, test := range question.Tests {
+		out, err := runTest(funcCode, test.Input, test.ExpectedOutput)
+
+		passed := true
+		var comments string
+		if err != nil {
+			passed = false
+			comments = fmt.Sprintf("Test failed for input %s: %v", test.Input, err)
+		} else {
+			if failureRegex.MatchString(out) {
+				match := failureRegex.FindStringSubmatch(out)
+				if match != nil {
+				passed = false
+				comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
+				} else{
+					comments = fmt.Sprintf("Test failed for input %s", test.Input)
+				}} else {
+				comments = "Test passed"
+			}
+		
+	}
+		results = append(results, TestResult{
+			TestNumber: i + 1,   
+			Passed:     passed,  
+			Comments:   comments, 
+		})
+	}
+
+	return results, nil
 }

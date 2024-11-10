@@ -5,8 +5,8 @@ import (
 )
 
 type Test struct {
-	Input          interface{} `bson:"input"`         
-	ExpectedOutput interface{} `bson:"expected_output"` 
+	Input          string `bson:"input"`         
+	ExpectedOutput string `bson:"expected_output"` 
 }
 
 type Question struct {

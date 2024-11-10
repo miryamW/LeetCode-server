@@ -79,6 +79,7 @@ func (c *QuestionController) HandleDelete(ctx *gin.Context) {
 // HandleRunTests handles POST requests to run tests on a solution
 func (c *QuestionController) HandleRunTests(ctx *gin.Context) {
 	var solution struct {
+		Id string `json:"id"`
 		Solution string `json:"solution"`
 	}
 
@@ -87,9 +88,12 @@ func (c *QuestionController) HandleRunTests(ctx *gin.Context) {
 		return
 	}
 
-	questionService.RunTests(solution.Solution, "5", "10")
-
-	ctx.JSON(http.StatusOK, gin.H{"message": "Tests run successfully"})
+	out, err := questionService.RunTests(solution.Solution, solution.Id)
+	if err != nil {
+			return
+	}
+	
+	ctx.JSON(http.StatusOK, gin.H{"message": out})
 }
 
 // RegisterHandlers registers all routes for the question controller

@@ -1,29 +1,25 @@
-# Step 1: Build the application
-FROM golang:1.22.2 AS builder
+# Use an official C++ image as a base image
+FROM ubuntu:20.04
 
-# Update the package list and install CA certificates
-RUN apt-get update && apt-get install -y ca-certificates
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y \
+    cmake \
+    g++ \
+    git \
+    build-essential
 
-# Set the working directory inside the container
-WORKDIR /go/src/leetcode-server
+# Set the working directory in the container to /app
+WORKDIR /app
 
-# Copy the source code into the container
-COPY . .
+# Copy the local project files into the /app directory in the container
+COPY . /app
 
-# Update Go modules before building
-RUN go mod tidy
+# Verify that CMakeLists.txt exists in the container
+RUN ls -l /app/CMakeLists.txt
 
-# Build the application
-RUN go build -o myserver main.go
+# Run cmake and make to build the project
+RUN cmake . && make
 
-# Step 2: Create the final image with the binary
-FROM debian:bullseye-slim
-
-# Copy the binary from the builder stage to the final image
-COPY --from=builder /go/src/leetcode-server/myserver /usr/local/bin/myserver
-
-# Expose the port the server will run on
-EXPOSE 8080
-
-# Run the binary as the container's entrypoint
-CMD ["/usr/local/bin/myserver"]
+# Command to run your application or tests (this can be adjusted depending on your project)
+CMD ["./your_executable"]
