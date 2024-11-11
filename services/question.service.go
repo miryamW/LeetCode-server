@@ -18,13 +18,18 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"LeetCode-server/models"
+	"github.com/joho/godotenv"
 	"log"
 )
 
 var questionCollection *mongo.Collection
 
 func Init() {
-	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
+	godotenv.Load()
+	dbUrl := os.Getenv("DATABASE_URL")
+	dbName := os.Getenv("DATABASE_NAME")
+	dbCollection := os.Getenv("COLLECTION_NAME")
+	clientOptions := options.Client().ApplyURI(dbUrl)
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
 		log.Fatal(err)
@@ -34,7 +39,7 @@ func Init() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	questionCollection = client.Database("LeetCode").Collection("questions")
+	questionCollection = client.Database(dbName).Collection(dbCollection)
 }
 
 func CreateQuestion(description string, level int, tests []question.Test) (*mongo.InsertOneResult, error) {
