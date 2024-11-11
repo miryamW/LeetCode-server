@@ -19,6 +19,28 @@ func (c *QuestionController) HandleGet(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, questions)
 }
 
+// HandleGetByID handles GET requests for retrieving a question by ID
+func (c *QuestionController) HandleGetByID(ctx *gin.Context) {
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing question ID"})
+		return
+	}
+
+	question, err := questionService.GetQuestionByID(id)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if question == nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "Question not found"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, question)
+}
+
 // HandlePost handles POST requests for creating a new question
 func (c *QuestionController) HandlePost(ctx *gin.Context) {
 	var newQuestion question.Question
@@ -27,7 +49,7 @@ func (c *QuestionController) HandlePost(ctx *gin.Context) {
 		return
 	}
 
-	createdQuestion, err := questionService.CreateQuestion(newQuestion.Description, newQuestion.Level, newQuestion.Tests)
+	createdQuestion, err := questionService.CreateQuestion(newQuestion.Title, newQuestion.Description, newQuestion.Level, newQuestion.Tests)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -50,7 +72,7 @@ func (c *QuestionController) HandlePut(ctx *gin.Context) {
 		return
 	}
 
-	updatedQuestionResult, err := questionService.UpdateQuestion(id, updatedQuestion.Description, updatedQuestion.Level, updatedQuestion.Tests)
+	updatedQuestionResult, err := questionService.UpdateQuestion(id, updatedQuestion.Title, updatedQuestion.Description, updatedQuestion.Level, updatedQuestion.Tests)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -61,7 +83,7 @@ func (c *QuestionController) HandlePut(ctx *gin.Context) {
 
 // HandleDelete handles DELETE requests for deleting a question
 func (c *QuestionController) HandleDelete(ctx *gin.Context) {
-	id := ctx.DefaultQuery("id", "")
+	id := ctx.Param("id")
 	if id == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing question ID"})
 		return
@@ -100,8 +122,9 @@ func (c *QuestionController) HandleRunTests(ctx *gin.Context) {
 // RegisterHandlers registers all routes for the question controller
 func (c *QuestionController) RegisterHandlers(router *gin.Engine) {
 	router.GET("/questions", c.HandleGet)
+	router.GET("/questions/:id", c.HandleGetByID)
 	router.POST("/questions", c.HandlePost)
 	router.PUT("/questions", c.HandlePut)
-	router.DELETE("/questions", c.HandleDelete)
+	router.DELETE("/questions/:id", c.HandleDelete)
 	router.POST("/questions/runTests", c.HandleRunTests)
 }

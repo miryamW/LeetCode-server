@@ -42,88 +42,110 @@ func Init() {
 	questionCollection = client.Database(dbName).Collection(dbCollection)
 }
 
-func CreateQuestion(description string, level int, tests []question.Test) (*mongo.InsertOneResult, error) {
+// 	result, err := questionCollection.InsertOne(context.Background(), question)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return result, nil
+// }
+func CreateQuestion(title, description string, level int, tests []question.Test) (*mongo.InsertOneResult, error) {
 	question := question.Question{
-		Description: description,
-		Level:       level,
-		Tests:       tests,
+			Title:       title,
+			Description: description,
+			Level:       level,
+			Tests:       tests,
 	}
 
 	result, err := questionCollection.InsertOne(context.Background(), question)
 	if err != nil {
-		return nil, err
+			return nil, err
 	}
 	return result, nil
 }
 
+// 	var question question.Question
+// 	err = questionCollection.FindOne(context.Background(), bson.M{"_id": questionID}).Decode(&question)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return &question, nil
+// }
 func GetQuestionByID(id string) (*question.Question, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		return nil, err
+			return nil, err
 	}
 
 	var question question.Question
 	err = questionCollection.FindOne(context.Background(), bson.M{"_id": questionID}).Decode(&question)
 	if err != nil {
-		return nil, err
+			return nil, err
 	}
 	return &question, nil
 }
 
+
+// 	return questions, nil
+// }
 func GetAllQuestions() ([]question.Question, error) {
 	cursor, err := questionCollection.Find(context.Background(), bson.M{})
 	if err != nil {
-		return nil, err
+			return nil, err
 	}
 	defer cursor.Close(context.Background())
 
 	var questions []question.Question
 	for cursor.Next(context.Background()) {
-		var question question.Question
-		if err := cursor.Decode(&question); err != nil {
-			return nil, err
-		}
-		questions = append(questions, question)
+			var question question.Question
+			if err := cursor.Decode(&question); err != nil {
+					return nil, err
+			}
+			questions = append(questions, question)
 	}
 
 	if err := cursor.Err(); err != nil {
-		return nil, err
+			return nil, err
 	}
 
 	return questions, nil
 }
 
-func UpdateQuestion(id string, description string, level int, tests []question.Test) (*mongo.UpdateResult, error) {
+// 	return result, nil
+// }
+func UpdateQuestion(id string, title, description string, level int, tests []question.Test) (*mongo.UpdateResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		return nil, err
+			return nil, err
 	}
 
 	update := bson.M{
-		"$set": bson.M{
-			"description": description,
-			"level":       level,
-			"tests":       tests,
-		},
+			"$set": bson.M{
+					"title":       title,
+					"description": description,
+					"level":       level,
+					"tests":       tests,
+			},
 	}
 
 	result, err := questionCollection.UpdateOne(context.Background(), bson.M{"_id": questionID}, update)
 	if err != nil {
-		return nil, err
+			return nil, err
 	}
 
 	return result, nil
 }
 
+// 	return result, nil
+// }
 func DeleteQuestion(id string) (*mongo.DeleteResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		return nil, err
+			return nil, err
 	}
 
 	result, err := questionCollection.DeleteOne(context.Background(), bson.M{"_id": questionID})
 	if err != nil {
-		return nil, err
+			return nil, err
 	}
 
 	return result, nil
@@ -187,7 +209,7 @@ func runTestPython(funcCode, input, expectedOutput string) (string, error) {
 from func import *
 
 def test_func():
-    result = main(%s)
+    result = func(%s)
     assert result == %s, f"Expected %s but got {result}"
 `, input, expectedOutput, expectedOutput)
 
@@ -408,7 +430,6 @@ func RunTests(funcCode string, questionId string, language string) ([]TestResult
 	}else if(language == "python"){
 		for i, test := range question.Tests {
 			out, err := runTestPython(funcCode, test.Input, test.ExpectedOutput)
-			fmt.Println(out)
 			passed := true
 			var comments string
 			if err != nil {

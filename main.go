@@ -6,11 +6,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"LeetCode-server/controllers"
 	"LeetCode-server/services"
+	"time"
+	 "github.com/gin-contrib/cors"
 )
 
 func main() {
 	r := gin.Default()
-
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"}, 
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+   }))
 	controller := &questioncontroller.QuestionController{}
 	questionService.Init()
 	controller.RegisterHandlers(r)
