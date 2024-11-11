@@ -5,12 +5,13 @@ import (
 	"context"
 	"regexp" 
 	"fmt"
+	"time"
 	"io"
 	"archive/tar"   
 	"os"
 	"go.mongodb.org/mongo-driver/bson"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -171,7 +172,7 @@ func createTar(filePath string, destPath string) (*bytes.Buffer, error) {
 	return buf, nil
 }
 
-func runTest(funcCode, input, expectedOutput string) (string, error) {
+func runTestPython(funcCode, input, expectedOutput string) (string, error) {
 	funcFile, err := createTempFile(funcCode, "test_func", "py")
 	if err != nil {
 		return "", err
@@ -215,11 +216,11 @@ def test_func():
 		return "", fmt.Errorf("Error creating Docker container: %v", err)
 	}
 
-	if err := cli.CopyToContainer(ctx, resp.ID, "/app", funcTar, types.CopyToContainerOptions{}); err != nil {
+	if err := cli.CopyToContainer(ctx, resp.ID, "/app", funcTar, container.CopyToContainerOptions{}); err != nil {
 		return "", fmt.Errorf("Error copying function file to container: %v", err)
 	}
 
-	if err := cli.CopyToContainer(ctx, resp.ID, "/app", testTar, types.CopyToContainerOptions{}); err != nil {
+	if err := cli.CopyToContainer(ctx, resp.ID, "/app", testTar, container.CopyToContainerOptions{}); err != nil {
 		return "", fmt.Errorf("Error copying test file to container: %v", err)
 	}
 
@@ -254,13 +255,114 @@ def test_func():
 	return buf.String(), nil
 }
 
+func runTestJava(funcCode, input, expectedOutput string) (string, error) {
+	funcFile, err := createTempFile(funcCode, "Main", "java")
+	if err != nil {
+		return "", err
+	}
+
+	testCode := fmt.Sprintf(`
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+public class MainTest {
+
+    private final Main main = new Main();
+
+    @Test
+    public void testFunc() {
+        try {
+            int result = main.func(%s);
+            assertEquals(%s, result);
+        } catch (AssertionError e) {
+            System.out.println("testFunc failed: Expected %s but got "+ main.func(%s));
+            throw e; 
+        }
+    }
+}`, input, expectedOutput, expectedOutput, input)
+
+	testFile, err := createTempFile(testCode, "MainTest", "java")
+	if err != nil {
+		return "", err
+	}
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return "", fmt.Errorf("Error creating Docker client: %v", err)
+	}
+
+	ctx := context.Background()
+
+	funcTar, err := createTar(funcFile, "Main.java")
+	if err != nil {
+		return "", fmt.Errorf("Error creating TAR for function file: %v", err)
+	}
+
+	testTar, err := createTar(testFile, "MainTest.java")
+	if err != nil {
+		return "", fmt.Errorf("Error creating TAR for test file: %v", err)
+	}
+
+	containerName := "my-container-" + time.Now().Format("20060102150405")
+
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image: "my-java-test-image",
+	}, nil, nil, nil, containerName)
+	if err != nil {
+		return "", fmt.Errorf("Error creating container: %v", err)
+	}
+
+		if err := cli.CopyToContainer(ctx, resp.ID, "app/src/main/java/", funcTar, types.CopyToContainerOptions{}); err != nil {
+			return "", fmt.Errorf("Error copying function file to container: %v", err)
+		}
+	
+		if err := cli.CopyToContainer(ctx, resp.ID, "app/src/test/java/", testTar, types.CopyToContainerOptions{}); err != nil {
+			return "", fmt.Errorf("Error copying test file to container: %v", err)
+		}
+
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", fmt.Errorf("Error starting container: %v", err)
+	}
+
+
+
+	
+
+	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNextExit)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return "", fmt.Errorf("Error waiting for container: %v", err)
+		}
+	case <-statusCh:
+	}
+
+	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	if err != nil {
+		return "", fmt.Errorf("Error getting container logs: %v", err)
+	}
+
+	defer out.Close()
+
+	var buf bytes.Buffer
+	_, err = stdcopy.StdCopy(&buf, os.Stderr, out)
+	if err != nil {
+		return "", fmt.Errorf("Error copying logs: %v", err)
+	}
+
+	defer os.Remove(testFile) 
+	defer os.Remove(funcFile) 
+
+	return buf.String(), nil
+}
+
 type TestResult struct {
 	TestNumber  int    `json:"test_number"`
 	Passed      bool   `json:"passed"`
 	Comments    string `json:"comments"`
 }
 
-func RunTests(funcCode string, questionId string) ([]TestResult, error) {
+func RunTests(funcCode string, questionId string, language string) ([]TestResult, error) {
 	question, err := GetQuestionByID(questionId)
 	if err != nil {
 		return nil, fmt.Errorf("Error fetching question: %v", err)
@@ -269,9 +371,9 @@ func RunTests(funcCode string, questionId string) ([]TestResult, error) {
 	var results []TestResult 
 
 	failureRegex := regexp.MustCompile(`Expected (\d+) but got ([\d\.]+)`)
-
+  if(language == "java"){
 	for i, test := range question.Tests {
-		out, err := runTest(funcCode, test.Input, test.ExpectedOutput)
+		out, err := runTestJava(funcCode, test.Input, test.ExpectedOutput)
 
 		passed := true
 		var comments string
@@ -291,12 +393,42 @@ func RunTests(funcCode string, questionId string) ([]TestResult, error) {
 			}
 		
 	}
+	
 		results = append(results, TestResult{
 			TestNumber: i + 1,   
 			Passed:     passed,  
 			Comments:   comments, 
 		})
 	}
-
+	}else if(language == "python"){
+		for i, test := range question.Tests {
+			out, err := runTestPython(funcCode, test.Input, test.ExpectedOutput)
+			fmt.Println(out)
+			passed := true
+			var comments string
+			if err != nil {
+				passed = false
+				comments = fmt.Sprintf("Test failed for input %s: %v", test.Input, err)
+			} else {
+				if failureRegex.MatchString(out) {
+					match := failureRegex.FindStringSubmatch(out)
+					if match != nil {
+					passed = false
+					comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
+					} else{
+						comments = fmt.Sprintf("Test failed for input %s", test.Input)
+					}} else {
+					comments = "Test passed"
+				}
+			
+		}
+		
+			results = append(results, TestResult{
+				TestNumber: i + 1,   
+				Passed:     passed,  
+				Comments:   comments, 
+			})
+		}
+	}
 	return results, nil
 }

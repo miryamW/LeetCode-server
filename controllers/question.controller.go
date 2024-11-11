@@ -81,6 +81,7 @@ func (c *QuestionController) HandleRunTests(ctx *gin.Context) {
 	var solution struct {
 		Id string `json:"id"`
 		Solution string `json:"solution"`
+		Language string `json:"language"`
 	}
 
 	if err := ctx.ShouldBindJSON(&solution); err != nil {
@@ -88,7 +89,7 @@ func (c *QuestionController) HandleRunTests(ctx *gin.Context) {
 		return
 	}
 
-	out, err := questionService.RunTests(solution.Solution, solution.Id)
+	out, err := questionService.RunTests(solution.Solution, solution.Id, solution.Language)
 	if err != nil {
 			return
 	}

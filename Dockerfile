@@ -1,25 +1,48 @@
-# Use an official C++ image as a base image
-FROM ubuntu:20.04
+############################
+# STEP 1 build executable binary
+############################
+FROM golang:alpine AS builder
 
-# Install build dependencies
-RUN apt-get update && \
-    apt-get install -y \
-    cmake \
-    g++ \
-    git \
-    build-essential
+# Install git and CA certificates
+RUN apk update && apk add --no-cache git ca-certificates
 
-# Set the working directory in the container to /app
-WORKDIR /app
+# Set environment variable for Go modules
+ENV GO111MODULE=on
 
-# Copy the local project files into the /app directory in the container
-COPY . /app
+# Set the working directory inside the container
+WORKDIR $GOPATH/src/packages/goginapp/
+COPY . .
 
-# Verify that CMakeLists.txt exists in the container
-RUN ls -l /app/CMakeLists.txt
+# Fetch dependencies
+RUN go mod download
 
-# Run cmake and make to build the project
-RUN cmake . && make
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /go/main .
 
-# Command to run your application or tests (this can be adjusted depending on your project)
-CMD ["./your_executable"]
+############################
+# STEP 2 build a small image
+############################
+FROM alpine:3
+
+# Install CA certificates
+RUN apk update && apk add --no-cache ca-certificates
+
+# Set the working directory
+WORKDIR /
+
+# Copy the static executable from the builder stage
+COPY --from=builder /go/main /go/main
+#COPY public /go/public
+
+# Set environment variables
+ENV PORT=8080
+ENV GIN_MODE=release
+
+# Expose port 8080 to the outside world
+EXPOSE 8080
+
+# Set the working directory
+WORKDIR /go
+
+# Run the Go Gin binary
+ENTRYPOINT ["/go/main"]
