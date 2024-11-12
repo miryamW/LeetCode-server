@@ -241,6 +241,11 @@ func deployToKubernetes(containerImage string) error {
 }
 
 func runTestPython(funcCode, input, expectedOutput string) (string, error) {
+	funcName, err := extractFuncName(funcCode)
+	if err != nil {
+		return "", err
+	}
+
 	funcFile, err := createTempFile(funcCode, "test_func", "py")
 	if err != nil {
 		return "", err
@@ -250,9 +255,9 @@ func runTestPython(funcCode, input, expectedOutput string) (string, error) {
 from func import *
 
 def test_func():
-    result = func(%s)
+    result = %s(%s)
     assert result == %s, f"Expected %s but got {result}"
-`, input, expectedOutput, expectedOutput)
+`, funcName, input, expectedOutput, expectedOutput)
 
 	testFile, err := createTempFile(testCode, "test", "py")
 	if err != nil {
@@ -328,10 +333,33 @@ def test_func():
 	return buf.String(), nil
 }
 
+func extractFuncName(funcCode string) (string, error) {
+	re := regexp.MustCompile(`def (\w+)`)
+	matches := re.FindStringSubmatch(funcCode)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("Could not find function name in the provided code")
+	}
+	return matches[1], nil
+}
+
+func extractFunctionName(funcCode string) (string, error) {
+	re := regexp.MustCompile(`public .*? (\w+)\(`)
+	matches := re.FindStringSubmatch(funcCode)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("Could not find function name in the code")
+	}
+	return matches[1], nil
+}
+
 func runTestJava(funcCode, input, expectedOutput string) (string, error) {
+	funcName, err := extractFunctionName(funcCode)
+	if err != nil {
+		return "", err
+	}
+
 	funcFile, err := createTempFile(funcCode, "Main", "java")
 	if err != nil {
-			return "", err
+		return "", err
 	}
 
 	testCode := fmt.Sprintf(`
@@ -345,76 +373,75 @@ public class MainTest {
 	@Test
 	public void testFunc() {
 			try {
-					int result = main.func(%s);
+					int result = main.%s(%s);
 					assertEquals(%s, result);
 			} catch (AssertionError e) {
-					System.out.println("testFunc failed: Expected %s but got "+ main.func(%s));
+					System.out.println("testFunc failed: Expected %s but got "+ main.%s(%s));
 					throw e; 
 			}
 	}
-}`, input, expectedOutput, expectedOutput, input)
+}`, funcName, input, expectedOutput, expectedOutput, funcName, input)
 
 	testFile, err := createTempFile(testCode, "MainTest", "java")
 	if err != nil {
-			return "", err
+		return "", err
 	}
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-			return "", fmt.Errorf("Error creating Docker client: %v", err)
+		return "", fmt.Errorf("Error creating Docker client: %v", err)
 	}
 
 	ctx := context.Background()
 
 	funcTar, err := createTar(funcFile, "Main.java")
 	if err != nil {
-			return "", fmt.Errorf("Error creating TAR for function file: %v", err)
+		return "", fmt.Errorf("Error creating TAR for function file: %v", err)
 	}
 
 	testTar, err := createTar(testFile, "MainTest.java")
 	if err != nil {
-			return "", fmt.Errorf("Error creating TAR for test file: %v", err)
+		return "", fmt.Errorf("Error creating TAR for test file: %v", err)
 	}
 
 	containerName := "my-container-" + time.Now().Format("20060102150405")
 
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
-			Image: "my-java-test-image", // אפשר לשים כאן את הדימוי שלך, אם הוא קיים ב-Kubernetes
+		Image: "my-java-test-image",
 	}, nil, nil, nil, containerName)
 	if err != nil {
-			return "", fmt.Errorf("Error creating container: %v", err)
+		return "", fmt.Errorf("Error creating container: %v", err)
 	}
 
 	if err := cli.CopyToContainer(ctx, resp.ID, "app/src/main/java/", funcTar, types.CopyToContainerOptions{}); err != nil {
-			return "", fmt.Errorf("Error copying function file to container: %v", err)
+		return "", fmt.Errorf("Error copying function file to container: %v", err)
 	}
 
 	if err := cli.CopyToContainer(ctx, resp.ID, "app/src/test/java/", testTar, types.CopyToContainerOptions{}); err != nil {
-			return "", fmt.Errorf("Error copying test file to container: %v", err)
+		return "", fmt.Errorf("Error copying test file to container: %v", err)
 	}
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-			return "", fmt.Errorf("Error starting container: %v", err)
+		return "", fmt.Errorf("Error starting container: %v", err)
 	}
 
-	// קריאה לפונקציה deployToKubernetes כדי להעלות את הקונטיינר ל-Kubernetes
 	err = deployToKubernetes("my-java-test-image")
 	if err != nil {
-			return "", fmt.Errorf("Error deploying to Kubernetes: %v", err)
+		return "", fmt.Errorf("Error deploying to Kubernetes: %v", err)
 	}
 
 	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNextExit)
 	select {
 	case err := <-errCh:
-			if err != nil {
-					return "", fmt.Errorf("Error waiting for container: %v", err)
-			}
+		if err != nil {
+			return "", fmt.Errorf("Error waiting for container: %v", err)
+		}
 	case <-statusCh:
 	}
 
 	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
-			return "", fmt.Errorf("Error getting container logs: %v", err)
+		return "", fmt.Errorf("Error getting container logs: %v", err)
 	}
 
 	defer out.Close()
@@ -422,7 +449,7 @@ public class MainTest {
 	var buf bytes.Buffer
 	_, err = stdcopy.StdCopy(&buf, os.Stderr, out)
 	if err != nil {
-			return "", fmt.Errorf("Error copying logs: %v", err)
+		return "", fmt.Errorf("Error copying logs: %v", err)
 	}
 
 	defer os.Remove(testFile)
@@ -441,6 +468,7 @@ type TestResult struct {
 func RunTests(funcCode string, questionId string, language string) ([]TestResult, error) {
 	question, err := GetQuestionByID(questionId)
 	if err != nil {
+		fmt.Println("oiiiiii")
 		return nil, fmt.Errorf("Error fetching question: %v", err)
 	}
 
@@ -479,9 +507,11 @@ func RunTests(funcCode string, questionId string, language string) ([]TestResult
 	}else if(language == "python"){
 		for i, test := range question.Tests {
 			out, err := runTestPython(funcCode, test.Input, test.ExpectedOutput)
+			fmt.Println(out)
 			passed := true
 			var comments string
 			if err != nil {
+				fmt.Printf("oiiiiii")
 				passed = false
 				comments = fmt.Sprintf("Test failed for input %s: %v", test.Input, err)
 			} else {
