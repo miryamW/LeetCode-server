@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 	 metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"github.com/docker/docker/api/types"
@@ -46,12 +47,7 @@ func Init() {
 	questionCollection = client.Database(dbName).Collection(dbCollection)
 }
 
-// 	result, err := questionCollection.InsertOne(context.Background(), question)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return result, nil
-// }
+
 func CreateQuestion(title, description string, level int, tests []question.Test) (*mongo.InsertOneResult, error) {
 	question := question.Question{
 			Title:       title,
@@ -67,13 +63,7 @@ func CreateQuestion(title, description string, level int, tests []question.Test)
 	return result, nil
 }
 
-// 	var question question.Question
-// 	err = questionCollection.FindOne(context.Background(), bson.M{"_id": questionID}).Decode(&question)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return &question, nil
-// }
+
 func GetQuestionByID(id string) (*question.Question, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -89,8 +79,7 @@ func GetQuestionByID(id string) (*question.Question, error) {
 }
 
 
-// 	return questions, nil
-// }
+
 func GetAllQuestions() ([]question.Question, error) {
 	cursor, err := questionCollection.Find(context.Background(), bson.M{})
 	if err != nil {
@@ -114,8 +103,7 @@ func GetAllQuestions() ([]question.Question, error) {
 	return questions, nil
 }
 
-// 	return result, nil
-// }
+
 func UpdateQuestion(id string, title, description string, level int, tests []question.Test) (*mongo.UpdateResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -139,8 +127,7 @@ func UpdateQuestion(id string, title, description string, level int, tests []que
 	return result, nil
 }
 
-// 	return result, nil
-// }
+
 func DeleteQuestion(id string) (*mongo.DeleteResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -283,7 +270,7 @@ def test_func():
 
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image: "my-python-test-image", 
-		Cmd:   []string{"sh", "-c", "pytest app/test.py"},
+		Cmd:   []string{"sh", "-c", "pytest -q app/test.py"},
 	}, nil, nil, nil, "")
 	if err != nil {
 		return "", fmt.Errorf("Error creating Docker container: %v", err)
@@ -342,29 +329,94 @@ func extractFuncName(funcCode string) (string, error) {
 	return matches[1], nil
 }
 
-func extractFunctionName(funcCode string) (string, error) {
-	re := regexp.MustCompile(`public .*? (\w+)\(`)
+func extractFunctionName(funcCode string, returnType string) (string, error) {
+	re := regexp.MustCompile(fmt.Sprintf(`%s\s+(\w+)\s*\(`, regexp.QuoteMeta(returnType)))
 	matches := re.FindStringSubmatch(funcCode)
-	if len(matches) < 2 {
-		return "", fmt.Errorf("Could not find function name in the code")
+	if len(matches) < 1{
+		return "", fmt.Errorf("Could not find function name after return type '%s' in the code", returnType)
 	}
+
 	return matches[1], nil
 }
 
-func runTestJava(funcCode, input, expectedOutput string) (string, error) {
-	funcName, err := extractFunctionName(funcCode)
-	if err != nil {
-		return "", err
+
+
+func extractModifier(funcCode string) (string, error) {
+	funcCode = regexp.MustCompile(`\s+`).ReplaceAllString(funcCode, " ")
+
+	reStatic := regexp.MustCompile(`public\s+static\s+([a-zA-Z0-9\[\]]+)\s+\w+\(`)
+	matchesStatic := reStatic.FindStringSubmatch(funcCode)
+	if len(matchesStatic) > 1 {
+		return matchesStatic[1], nil
 	}
+
+	rePublic := regexp.MustCompile(`public\s+([a-zA-Z0-9\[\]]+)\s+\w+\(`)
+	matchesPublic := rePublic.FindStringSubmatch(funcCode)
+	if len(matchesPublic) > 1 {
+		return matchesPublic[1], nil
+	}
+
+	return "", fmt.Errorf("Could not find return type in the code")
+}
+
+func convertInputOutputArray(input string) (string, error) {
+	re := regexp.MustCompile(`\[(.*?)\]`)
+	matches := re.FindStringSubmatch(input)
+	if len(matches) < 2 {
+		return input, nil 
+	}
+
+	arrayContent := matches[1]
+	if regexp.MustCompile(`^\d+(\s*,\s*\d+)*$`).MatchString(arrayContent) {
+		return strings.Replace(input, matches[0], "new int[]{" + arrayContent + "}", 1), nil
+	} else if regexp.MustCompile(`^\d+\.\d+(\s*,\s*\d+\.\d+)*$`).MatchString(arrayContent) {
+		return strings.Replace(input, matches[0], "new double[]{" + arrayContent + "}", 1), nil
+	} else if regexp.MustCompile(`^".*?"(\s*,\s*".*?")*$`).MatchString(arrayContent) {
+		return strings.Replace(input, matches[0], "new String[]{" + arrayContent + "}", 1), nil
+	} else {
+		return "", fmt.Errorf("Unsupported array format")
+	}
+}
+
+func runTestJava(funcCode, input, expectedOutput string) (string, error) {
 
 	funcFile, err := createTempFile(funcCode, "Main", "java")
 	if err != nil {
 		return "", err
 	}
 
+	convertedInput, err := convertInputOutputArray(input)
+	if err != nil {
+		return "", err
+	}
+	convertedOutput, err := convertInputOutputArray(expectedOutput)
+	if err != nil {
+		return "", err
+	}
+
+	modifier, err := extractModifier(funcCode)
+	if err != nil {
+		return "", err
+	}
+	funcName, err := extractFunctionName(funcCode, modifier)
+	if err != nil {
+		return "", err
+	}
+	var assert string
+	var print string
+	if (convertedOutput == expectedOutput) {
+		assert = "assertEquals"
+		print = fmt.Sprintf(`System.out.println(main.%s(%s));`, funcName, convertedInput)
+	} else {
+		assert = "assertArrayEquals"
+		print = fmt.Sprintf(`System.out.println(Arrays.toString(main.%s(%s)));`, funcName, convertedInput)
+	}	
 	testCode := fmt.Sprintf(`
+	import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+
 
 public class MainTest {
 
@@ -373,14 +425,15 @@ public class MainTest {
 	@Test
 	public void testFunc() {
 			try {
-					int result = main.%s(%s);
-					assertEquals(%s, result);
+					%s result = main.%s(%s);
+					%s(%s, result);
 			} catch (AssertionError e) {
-					System.out.println("testFunc failed: Expected %s but got "+ main.%s(%s));
+					System.out.print("Expected %s but got ");
+					%s
 					throw e; 
 			}
 	}
-}`, funcName, input, expectedOutput, expectedOutput, funcName, input)
+}`, modifier, funcName, convertedInput, assert, convertedOutput, expectedOutput, print)
 
 	testFile, err := createTempFile(testCode, "MainTest", "java")
 	if err != nil {
@@ -458,82 +511,86 @@ public class MainTest {
 	return buf.String(), nil
 }
 
-
 type TestResult struct {
 	TestNumber  int    `json:"test_number"`
 	Passed      bool   `json:"passed"`
-	Comments    string `json:"comments"`
+	Output    string `json:"output"`
+	Input    string `json: "input"`
+	ExpectedOutput    string `json: "expectedOutput"`
+	Comments string `json:"comments"`
 }
 
 func RunTests(funcCode string, questionId string, language string) ([]TestResult, error) {
 	question, err := GetQuestionByID(questionId)
 	if err != nil {
-		fmt.Println("oiiiiii")
 		return nil, fmt.Errorf("Error fetching question: %v", err)
 	}
 
-	var results []TestResult 
+	var results []TestResult
+	failureRegex := regexp.MustCompile(`got (\S.*\S)`)
+	failedKeywords := []string{"failed", "FAILED"}
 
-	failureRegex := regexp.MustCompile(`Expected (\d+) but got ([\d\.]+)`)
-  if(language == "java"){
 	for i, test := range question.Tests {
-		out, err := runTestJava(funcCode, test.Input, test.ExpectedOutput)
-
+		var out string
+		var err error
+		if language == "java" {
+			out, err = runTestJava(funcCode, test.Input, test.ExpectedOutput)
+		} else {
+			out, err = runTestPython(funcCode, test.Input, test.ExpectedOutput)
+		}
 		passed := true
 		var comments string
+		output := ""
+
 		if err != nil {
 			passed = false
-			comments = fmt.Sprintf("Test failed for input %s: %v", test.Input, err)
+			comments = err.Error()
 		} else {
-			if failureRegex.MatchString(out) {
-				match := failureRegex.FindStringSubmatch(out)
+			for _, keyword := range failedKeywords {
+				if strings.Contains(strings.ToLower(out), keyword) {
+					passed = false
+					break
+				}
+			}
+
+			allMatches := failureRegex.FindAllStringSubmatch(out, -1)
+			if len(allMatches) >= 2 {
+				match := allMatches[1] 
 				if match != nil {
-				passed = false
-				comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
-				} else{
+					parts := strings.SplitN(match[0], " ", 2)
+					if len(parts) > 1 {
+						output = parts[1]
+					}
+					comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
+				} else {
 					comments = fmt.Sprintf("Test failed for input %s", test.Input)
-				}} else {
+				}
+			} else if len(allMatches) == 1 {
+				match := allMatches[0] 
+				if match != nil {
+					parts := strings.SplitN(match[0], " ", 2)
+					if len(parts) > 1 {
+						output = parts[1]
+					}
+					comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
+				} else {
+					comments = fmt.Sprintf("Test failed for input %s", test.Input)
+				}
+			} else {
 				comments = "Test passed"
 			}
-		
-	}
-	
+		}
+		if output == "" {
+			output = test.ExpectedOutput
+		}
 		results = append(results, TestResult{
-			TestNumber: i + 1,   
-			Passed:     passed,  
-			Comments:   comments, 
+			TestNumber:     i + 1,
+			Passed:         passed,
+			Comments:       comments,
+			Input:          test.Input,
+			ExpectedOutput: test.ExpectedOutput,
+			Output:         output,
 		})
-	}
-	}else if(language == "python"){
-		for i, test := range question.Tests {
-			out, err := runTestPython(funcCode, test.Input, test.ExpectedOutput)
-			fmt.Println(out)
-			passed := true
-			var comments string
-			if err != nil {
-				fmt.Printf("oiiiiii")
-				passed = false
-				comments = fmt.Sprintf("Test failed for input %s: %v", test.Input, err)
-			} else {
-				if failureRegex.MatchString(out) {
-					match := failureRegex.FindStringSubmatch(out)
-					if match != nil {
-					passed = false
-					comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
-					} else{
-						comments = fmt.Sprintf("Test failed for input %s", test.Input)
-					}} else {
-					comments = "Test passed"
-				}
-			
-		}
-		
-			results = append(results, TestResult{
-				TestNumber: i + 1,   
-				Passed:     passed,  
-				Comments:   comments, 
-			})
-		}
 	}
 	return results, nil
 }
