@@ -2,27 +2,23 @@ package questionService
 
 import (
 	"LeetCode-server/models"
-	"archive/tar"
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
-	 metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -47,7 +43,6 @@ func Init() {
 	questionCollection = client.Database(dbName).Collection(dbCollection)
 }
 
-
 func CreateQuestion(title, description string, level int, tests []question.Test) (*mongo.InsertOneResult, error) {
 	question := question.Question{
 			Title:       title,
@@ -63,7 +58,6 @@ func CreateQuestion(title, description string, level int, tests []question.Test)
 	return result, nil
 }
 
-
 func GetQuestionByID(id string) (*question.Question, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -77,8 +71,6 @@ func GetQuestionByID(id string) (*question.Question, error) {
 	}
 	return &question, nil
 }
-
-
 
 func GetAllQuestions() ([]question.Question, error) {
 	cursor, err := questionCollection.Find(context.Background(), bson.M{})
@@ -103,7 +95,6 @@ func GetAllQuestions() ([]question.Question, error) {
 	return questions, nil
 }
 
-
 func UpdateQuestion(id string, title, description string, level int, tests []question.Test) (*mongo.UpdateResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -126,7 +117,6 @@ func UpdateQuestion(id string, title, description string, level int, tests []que
 
 	return result, nil
 }
-
 
 func DeleteQuestion(id string) (*mongo.DeleteResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
@@ -157,173 +147,125 @@ func createTempFile(content, prefix, ext string) (string, error) {
 	return file.Name(), nil
 }
 
-func createTar(filePath string, destPath string) (*bytes.Buffer, error) {
-	buf := new(bytes.Buffer)
-	tw := tar.NewWriter(buf)
-	defer tw.Close()
 
-	file, err := os.Open(filePath)
+func runTestPython(funcCode, input, expectedOutput string) (string, error) {
+	  err := os.MkdirAll("my_tests", 0755)
+	  if err != nil {
+		  return "", fmt.Errorf("failed to create directory: %w", err)
+    }
+		defer func() {
+			err := os.RemoveAll("my_tests")
+			if err != nil {
+				fmt.Printf("failed to remove directory: %v\n", err)
+			}
+		}()
+		funcName, err := extractFuncName(funcCode)
+		if err != nil {
+			return "", err
+		}
+
+		_, err = createTempFile(funcCode, "my_tests/func", "py")
+		if err != nil {
+			return "", err
+		}
+	
+		testCode := fmt.Sprintf(`
+from func import *
+	
+def test():
+		result = %s(%s)
+		assert result == %s, f"Expected %s but got {result}"
+	`, funcName, input, expectedOutput, expectedOutput)
+	
+		_, err = createTempFile(testCode, "my_tests/test_func", "py")
+		if err != nil {
+			return "", err
+		}
+	
+		kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		kubeconfig = "/home/miryam/.minikube/config/config" 
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	stat, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	header := &tar.Header{
-		Name: destPath, 
-		Mode: 0600,     
-		Size: stat.Size(),
-	}
-
-	if err := tw.WriteHeader(header); err != nil {
-		return nil, err
-	}
-
-	if _, err := io.Copy(tw, file); err != nil {
-		return nil, err
-	}
-
-	return buf, nil
-}
-
-func deployToKubernetes(containerImage string) error {
-	config, err := clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
-	if err != nil {
-		return fmt.Errorf("Error building kubeconfig: %v", err)
+		log.Fatalf("Failed to build kubeconfig: %v", err)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return fmt.Errorf("Error creating Kubernetes client: %v", err)
+		log.Fatalf("Failed to create clientset: %v", err)
 	}
-	podName := "test-pod-" + time.Now().Format("20060102150405")
-	pod := &v1.Pod{
+	podName := "python-test-pod" + uuid.New().String()
+
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:  podName,
+			Name: podName,
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
 				{
-					Name:  "python-test-container",
-					Image: containerImage,
-					Command: []string{"sh", "-c", "pytest app/test.py"},
+					Name:  "python-test",
+					Image: "miryamw/python-test:latest",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							"memory": resource.MustParse("512Mi"),
+							"cpu":    resource.MustParse("500m"), 
+						},
+						Limits: corev1.ResourceList{
+							"memory": resource.MustParse("1Gi"), 
+							"cpu":    resource.MustParse("1"),   
+						},
+					},
 				},
 			},
-			RestartPolicy: v1.RestartPolicyNever,
+			RestartPolicy: corev1.RestartPolicyNever, 
 		},
 	}
 
 	_, err = clientset.CoreV1().Pods("default").Create(context.TODO(), pod, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("Error creating Kubernetes pod: %v", err)
+		log.Fatalf("Failed to create pod: %v", err)
 	}
+	fmt.Println("Pod created successfully.")
 
-	fmt.Println("Pod created successfully")
-
-	return nil
-}
-
-func runTestPython(funcCode, input, expectedOutput string) (string, error) {
-	funcName, err := extractFuncName(funcCode)
-	if err != nil {
-		return "", err
-	}
-
-	funcFile, err := createTempFile(funcCode, "test_func", "py")
-	if err != nil {
-		return "", err
-	}
-
-	testCode := fmt.Sprintf(`
-from func import *
-
-def test_func():
-    result = %s(%s)
-    assert result == %s, f"Expected %s but got {result}"
-`, funcName, input, expectedOutput, expectedOutput)
-
-	testFile, err := createTempFile(testCode, "test", "py")
-	if err != nil {
-		return "", err
-	}
-
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return "", fmt.Errorf("Error creating Docker client: %v", err)
-	}
-
-	ctx := context.Background()
-
-	funcTar, err := createTar(funcFile, "app/func.py")
-	if err != nil {
-		return "", fmt.Errorf("Error creating TAR for function file: %v", err)
-	}
-
-	testTar, err := createTar(testFile, "app/test.py")
-	if err != nil {
-		return "", fmt.Errorf("Error creating TAR for test file: %v", err)
-	}
-
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image: "my-python-test-image", 
-		Cmd:   []string{"sh", "-c", "pytest -q app/test.py"},
-	}, nil, nil, nil, "")
-	if err != nil {
-		return "", fmt.Errorf("Error creating Docker container: %v", err)
-	}
-
-	if err := cli.CopyToContainer(ctx, resp.ID, "/app", funcTar, container.CopyToContainerOptions{}); err != nil {
-		return "", fmt.Errorf("Error copying function file to container: %v", err)
-	}
-
-	if err := cli.CopyToContainer(ctx, resp.ID, "/app", testTar, container.CopyToContainerOptions{}); err != nil {
-		return "", fmt.Errorf("Error copying test file to container: %v", err)
-	}
-
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("Error starting Docker container: %v", err)
-	}
-
-	err = deployToKubernetes("my-python-test-image")
-	if err != nil {
-		return "", fmt.Errorf("Error deploying to Kubernetes: %v", err)
-	}
-	
-	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNextExit)
-	select {
-	case err := <-errCh:
+	for {
+		podStatus, err := clientset.CoreV1().Pods("default").Get(context.TODO(), podName, metav1.GetOptions{})
 		if err != nil {
-			return "", fmt.Errorf("Error waiting for container: %v", err)
+			log.Fatalf("Failed to get pod status: %v", err)
 		}
-	case <-statusCh:
+		if podStatus.Status.Phase == corev1.PodRunning {
+			fmt.Println("Pod is running.")
+			break
+		}
+		fmt.Println("Waiting for pod to be in 'Running' state...")
+		time.Sleep(5 * time.Second) 
 	}
 
-	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	cmd := exec.Command("kubectl", "cp", "/home/miryam/LeetCode-server/my_tests", podName+":/app/my_tests/")
+	err = cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("Error getting container logs: %v", err)
+		log.Fatalf("Failed to copy files: %v", err)
 	}
-	defer out.Close()
+	fmt.Println("Files copied to pod.")
 
-	var buf bytes.Buffer
-	_, err = stdcopy.StdCopy(&buf, os.Stderr, out)
+	cmd = exec.Command("kubectl", "exec", "-it", podName, "--", "pytest", "/app/my_tests")
+	output, _ := cmd.CombinedOutput()
+	fmt.Println("Test execution finished.")
+
+	err = clientset.CoreV1().Pods("default").Delete(context.TODO(), podName, metav1.DeleteOptions{})
 	if err != nil {
-		return "", fmt.Errorf("Error copying logs: %v", err)
+		log.Fatalf("Failed to delete pod: %v", err)
 	}
-
-	defer os.Remove(testFile)
-	defer os.Remove(funcFile)
-
-	return buf.String(), nil
+	fmt.Println("Pod deleted successfully.")
+	return string(output), nil
 }
 
 func extractFuncName(funcCode string) (string, error) {
-	re := regexp.MustCompile(`def (\w+)`)
+	re := regexp.MustCompile(`def\s+(\w+)\s*\(.*\)\s*:`)
 	matches := re.FindStringSubmatch(funcCode)
-	if len(matches) < 2 {
+	fmt.Println(matches)
+	if len(matches) < 1 {
 		return "", fmt.Errorf("Could not find function name in the provided code")
 	}
 	return matches[1], nil
@@ -338,8 +280,6 @@ func extractFunctionName(funcCode string, returnType string) (string, error) {
 
 	return matches[1], nil
 }
-
-
 
 func extractModifier(funcCode string) (string, error) {
 	funcCode = regexp.MustCompile(`\s+`).ReplaceAllString(funcCode, " ")
@@ -379,8 +319,22 @@ func convertInputOutputArray(input string) (string, error) {
 }
 
 func runTestJava(funcCode, input, expectedOutput string) (string, error) {
+	err := os.MkdirAll("src/main/java", 0755)
+	if err != nil {
+		return "", fmt.Errorf("failed to create directory: %w", err)
+	}
+	err = os.MkdirAll("src/test/java", 0755)
+	if err != nil {
+		return "", fmt.Errorf("failed to create directory: %w", err)
+	}
+	defer func() {
+		err := os.RemoveAll("src")
+		if err != nil {
+			fmt.Printf("failed to remove directory: %v\n", err)
+		}
+	}()
 
-	funcFile, err := createTempFile(funcCode, "Main", "java")
+	_, err = createTempFile(funcCode, "src/main/java/Main", "java")
 	if err != nil {
 		return "", err
 	}
@@ -402,21 +356,22 @@ func runTestJava(funcCode, input, expectedOutput string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	var assert string
 	var print string
-	if (convertedOutput == expectedOutput) {
+	if convertedOutput == expectedOutput {
 		assert = "assertEquals"
-		print = fmt.Sprintf(`System.out.println(main.%s(%s));`, funcName, convertedInput)
+		print = fmt.Sprintf("System.out.println(main.%s(%s));", funcName, convertedInput)
 	} else {
 		assert = "assertArrayEquals"
-		print = fmt.Sprintf(`System.out.println(Arrays.toString(main.%s(%s)));`, funcName, convertedInput)
-	}	
-	testCode := fmt.Sprintf(`
-	import java.util.Arrays;
+		print = fmt.Sprintf("System.out.println(Arrays.toString(main.%s(%s)));", funcName, convertedInput)
+	}
+
+	testCode := fmt.Sprintf(
+		`import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-
 
 public class MainTest {
 
@@ -435,80 +390,88 @@ public class MainTest {
 	}
 }`, modifier, funcName, convertedInput, assert, convertedOutput, expectedOutput, print)
 
-	testFile, err := createTempFile(testCode, "MainTest", "java")
+	_, err = createTempFile(testCode, "src/test/java/MainTest", "java")
 	if err != nil {
 		return "", err
 	}
 
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		kubeconfig = "/home/miryam/.minikube/config/config"
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
-		return "", fmt.Errorf("Error creating Docker client: %v", err)
+		log.Fatalf("Failed to build kubeconfig: %v", err)
 	}
 
-	ctx := context.Background()
-
-	funcTar, err := createTar(funcFile, "Main.java")
+	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return "", fmt.Errorf("Error creating TAR for function file: %v", err)
+		log.Fatalf("Failed to create clientset: %v", err)
+	}
+	podName := "java-test-pod" + uuid.New().String()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: podName,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "java-test",
+					Image: "miryamw/java-test:latest",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							"memory": resource.MustParse("512Mi"),
+							"cpu":    resource.MustParse("500m"),
+						},
+						Limits: corev1.ResourceList{
+							"memory": resource.MustParse("1Gi"),
+							"cpu":    resource.MustParse("1"),
+						},
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
 	}
 
-	testTar, err := createTar(testFile, "MainTest.java")
+	_, err = clientset.CoreV1().Pods("default").Create(context.TODO(), pod, metav1.CreateOptions{})
 	if err != nil {
-		return "", fmt.Errorf("Error creating TAR for test file: %v", err)
+		log.Fatalf("Failed to create pod: %v", err)
 	}
+	fmt.Println("Pod created successfully.")
 
-	containerName := "my-container-" + time.Now().Format("20060102150405")
-
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image: "my-java-test-image",
-	}, nil, nil, nil, containerName)
-	if err != nil {
-		return "", fmt.Errorf("Error creating container: %v", err)
-	}
-
-	if err := cli.CopyToContainer(ctx, resp.ID, "app/src/main/java/", funcTar, types.CopyToContainerOptions{}); err != nil {
-		return "", fmt.Errorf("Error copying function file to container: %v", err)
-	}
-
-	if err := cli.CopyToContainer(ctx, resp.ID, "app/src/test/java/", testTar, types.CopyToContainerOptions{}); err != nil {
-		return "", fmt.Errorf("Error copying test file to container: %v", err)
-	}
-
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("Error starting container: %v", err)
-	}
-
-	err = deployToKubernetes("my-java-test-image")
-	if err != nil {
-		return "", fmt.Errorf("Error deploying to Kubernetes: %v", err)
-	}
-
-	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNextExit)
-	select {
-	case err := <-errCh:
+	for {
+		podStatus, err := clientset.CoreV1().Pods("default").Get(context.TODO(), podName, metav1.GetOptions{})
 		if err != nil {
-			return "", fmt.Errorf("Error waiting for container: %v", err)
+			log.Fatalf("Failed to get pod status: %v", err)
 		}
-	case <-statusCh:
+		if podStatus.Status.Phase == corev1.PodRunning {
+			fmt.Println("Pod is running.")
+			break
+		}
+		fmt.Println("Waiting for pod to be in 'Running' state...")
+		time.Sleep(5 * time.Second)
 	}
 
-	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	cmd := exec.Command("kubectl", "cp", "/home/miryam/LeetCode-server/src", podName+":/app/src/")
+	err = cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("Error getting container logs: %v", err)
+		log.Fatalf("Failed to copy files: %v", err)
 	}
+	fmt.Println("Files copied to pod.")
 
-	defer out.Close()
+	cmd = exec.Command("kubectl", "exec", "-it", podName, "--", "mvn", "test")
+	output, _ := cmd.CombinedOutput()
+	fmt.Println("Test execution finished.")
 
-	var buf bytes.Buffer
-	_, err = stdcopy.StdCopy(&buf, os.Stderr, out)
+	err = clientset.CoreV1().Pods("default").Delete(context.TODO(), podName, metav1.DeleteOptions{})
 	if err != nil {
-		return "", fmt.Errorf("Error copying logs: %v", err)
+		log.Fatalf("Failed to delete pod: %v", err)
 	}
-
-	defer os.Remove(testFile)
-	defer os.Remove(funcFile)
-
-	return buf.String(), nil
+	fmt.Println("Pod deleted successfully.")
+	return string(output), nil
 }
 
 type TestResult struct {
@@ -520,77 +483,118 @@ type TestResult struct {
 	Comments string `json:"comments"`
 }
 
+func findErrorLine(output string) string {
+	lines := strings.Split(output, "\n")
+
+	re := regexp.MustCompile(`\w+Error:.*$`)
+
+	for i := len(lines) - 1; i >= 0; i-- {
+			line := lines[i]
+			if re.MatchString(line) {
+					// בודק אם זה לא "AssertionError"
+					if !strings.Contains(line, "AssertionError") {
+							// מחזיר את השורה כולה
+							return line
+					}
+			}
+	}
+
+	return ""
+}
+
 func RunTests(funcCode string, questionId string, language string) ([]TestResult, error) {
 	question, err := GetQuestionByID(questionId)
 	if err != nil {
-		return nil, fmt.Errorf("Error fetching question: %v", err)
+			return nil, fmt.Errorf("Error fetching question: %v", err)
 	}
 
 	var results []TestResult
-	failureRegex := regexp.MustCompile(`got (\S.*\S)`)
+	failureRegex := regexp.MustCompile(`got (\S.*\S?)`)
 	failedKeywords := []string{"failed", "FAILED"}
+	compilationErrorRegex := regexp.MustCompile(`/app/src/main/java/Main.java:\[(\d+,\d+)\] (.+)`)
 
 	for i, test := range question.Tests {
-		var out string
-		var err error
-		if language == "java" {
-			out, err = runTestJava(funcCode, test.Input, test.ExpectedOutput)
-		} else {
-			out, err = runTestPython(funcCode, test.Input, test.ExpectedOutput)
-		}
-		passed := true
-		var comments string
-		output := ""
-
-		if err != nil {
-			passed = false
-			comments = err.Error()
-		} else {
-			for _, keyword := range failedKeywords {
-				if strings.Contains(strings.ToLower(out), keyword) {
-					passed = false
-					break
-				}
-			}
-
-			allMatches := failureRegex.FindAllStringSubmatch(out, -1)
-			if len(allMatches) >= 2 {
-				match := allMatches[1] 
-				if match != nil {
-					parts := strings.SplitN(match[0], " ", 2)
-					if len(parts) > 1 {
-						output = parts[1]
-					}
-					comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
-				} else {
-					comments = fmt.Sprintf("Test failed for input %s", test.Input)
-				}
-			} else if len(allMatches) == 1 {
-				match := allMatches[0] 
-				if match != nil {
-					parts := strings.SplitN(match[0], " ", 2)
-					if len(parts) > 1 {
-						output = parts[1]
-					}
-					comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
-				} else {
-					comments = fmt.Sprintf("Test failed for input %s", test.Input)
-				}
+			var out string
+			var err error
+			if language == "java" {
+					out, err = runTestJava(funcCode, test.Input, test.ExpectedOutput)
 			} else {
-				comments = "Test passed"
+					out, err = runTestPython(funcCode, test.Input, test.ExpectedOutput)
 			}
-		}
-		if output == "" {
-			output = test.ExpectedOutput
-		}
-		results = append(results, TestResult{
-			TestNumber:     i + 1,
-			Passed:         passed,
-			Comments:       comments,
-			Input:          test.Input,
-			ExpectedOutput: test.ExpectedOutput,
-			Output:         output,
-		})
+			fmt.Println(out)
+			passed := true
+			var comments string
+			output := ""
+
+			if err != nil {
+					passed = false
+					comments = err.Error()
+			} else {
+					if language == "java" {
+							compilationErrorMatch := compilationErrorRegex.FindStringSubmatch(out)
+							fmt.Println(compilationErrorMatch)
+							if len(compilationErrorMatch) > 2 {
+									passed = false
+									comments = fmt.Sprintf("compilation error - [%s] %s", compilationErrorMatch[1], compilationErrorMatch[2])
+							}
+					}
+
+					if language == "python" {
+						errorMessage := findErrorLine(out)
+						 if(errorMessage != ""){
+						   passed = false
+						   comments = "compilation error - " + errorMessage
+						}
+					}
+
+					if comments == "" {
+							for _, keyword := range failedKeywords {
+									if strings.Contains(strings.ToLower(out), keyword) {
+											passed = false
+											break
+									}
+							}
+
+							allMatches := failureRegex.FindAllStringSubmatch(out, -1)
+							fmt.Println(allMatches)
+							if len(allMatches) >= 2 {
+									match := allMatches[1]
+									if match != nil {
+											parts := strings.SplitN(match[0], " ", 2)
+											if len(parts) > 1 {
+													output = parts[1]
+											}
+											comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
+									} else {
+											comments = fmt.Sprintf("Test failed for input %s", test.Input)
+									}
+							} else if len(allMatches) == 1 {
+									match := allMatches[0]
+									if match != nil {
+											parts := strings.SplitN(match[0], " ", 2)
+											if len(parts) > 1 {
+													output = parts[1]
+											}
+											comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
+									} else {
+											comments = fmt.Sprintf("Test failed for input %s", test.Input)
+									}
+							} else {
+									comments = "Test passed"
+							}
+					}
+			}
+			if output == "" && passed {
+					output = test.ExpectedOutput
+			}
+			results = append(results, TestResult{
+					TestNumber:     i + 1,
+					Passed:         passed,
+					Comments:       comments,
+					Input:          test.Input,
+					ExpectedOutput: test.ExpectedOutput,
+					Output:         output,
+			})
 	}
 	return results, nil
 }
