@@ -11,7 +11,7 @@ type QuestionController struct{}
 
 // HandleGet handles GET requests for retrieving questions
 func (c *QuestionController) HandleGet(ctx *gin.Context) {
-	questions, err := questionService.GetAllQuestions()
+	questions, err := service.GetAllQuestions()
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -27,7 +27,7 @@ func (c *QuestionController) HandleGetByID(ctx *gin.Context) {
 		return
 	}
 
-	question, err := questionService.GetQuestionByID(id)
+	question, err := service.GetQuestionByID(id)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -43,13 +43,13 @@ func (c *QuestionController) HandleGetByID(ctx *gin.Context) {
 
 // HandlePost handles POST requests for creating a new question
 func (c *QuestionController) HandlePost(ctx *gin.Context) {
-	var newQuestion question.Question
+	var newQuestion models.Question
 	if err := ctx.ShouldBindJSON(&newQuestion); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
-	createdQuestion, err := questionService.CreateQuestion(newQuestion.Title, newQuestion.Description, newQuestion.Level, newQuestion.Tests)
+	createdQuestion, err := service.CreateQuestion(newQuestion.Title, newQuestion.Description, newQuestion.Level, newQuestion.Tests)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -66,13 +66,13 @@ func (c *QuestionController) HandlePut(ctx *gin.Context) {
 		return
 	}
 
-	var updatedQuestion question.Question
+	var updatedQuestion models.Question
 	if err := ctx.ShouldBindJSON(&updatedQuestion); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
-	updatedQuestionResult, err := questionService.UpdateQuestion(id, updatedQuestion.Title, updatedQuestion.Description, updatedQuestion.Level, updatedQuestion.Tests)
+	updatedQuestionResult, err := service.UpdateQuestion(id, updatedQuestion.Title, updatedQuestion.Description, updatedQuestion.Level, updatedQuestion.Tests)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -89,7 +89,7 @@ func (c *QuestionController) HandleDelete(ctx *gin.Context) {
 		return
 	}
 
-	deleteResult, err := questionService.DeleteQuestion(id)
+	deleteResult, err := service.DeleteQuestion(id)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -111,7 +111,7 @@ func (c *QuestionController) HandleRunTests(ctx *gin.Context) {
 		return
 	}
 
-	out, err := questionService.RunTests(solution.Solution, solution.Id, solution.Language)
+	out, err := service.RunTests(solution.Solution, solution.Id, solution.Language)
 	if err != nil {
 			return
 	}
