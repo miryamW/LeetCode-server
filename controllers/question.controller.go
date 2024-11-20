@@ -51,6 +51,10 @@ func (c *QuestionController) HandlePost(ctx *gin.Context) {
 
 	createdQuestion, err := service.CreateQuestion(newQuestion.Title, newQuestion.Description, newQuestion.Level, newQuestion.Tests)
 	if err != nil {
+		if err.Error() == "Question must contain title & description & level & at least one test" {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -91,7 +95,7 @@ func (c *QuestionController) HandleDelete(ctx *gin.Context) {
 
 	deleteResult, err := service.DeleteQuestion(id)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error":"Question not exist"})
 		return
 	}
 
@@ -113,7 +117,8 @@ func (c *QuestionController) HandleRunTests(ctx *gin.Context) {
 
 	out, err := service.RunTests(solution.Solution, solution.Id, solution.Language)
 	if err != nil {
-			return
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 	
 	ctx.JSON(http.StatusOK, gin.H{"message": out})

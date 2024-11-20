@@ -3,8 +3,10 @@ package service
 import (
 	"LeetCode-server/models"
 	"context"
+	"fmt"
 	"log"
 	"os"
+
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -33,6 +35,9 @@ func Init() {
 }
 
 func CreateQuestion(title, description string, level int, tests []models.Test) (*mongo.InsertOneResult, error) {
+	if(title == "" || description == "" ||level==0 ||len(tests) == 0){
+		return nil, fmt.Errorf("Question must contain title & description & level & at least one test")
+	}
 	question := models.Question{
 			Title:       title,
 			Description: description,
