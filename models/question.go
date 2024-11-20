@@ -10,4 +10,6 @@ type Question struct {
 	Description string             `bson:"description"`
 	Level       int                `bson:"level"`
 	Tests       []Test             `bson:"tests"` 
+	InputTypes string            `bson:"inputTypes"`
+	OutputType string            `bson:"outputType"`
 }

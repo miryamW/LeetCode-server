@@ -49,7 +49,7 @@ func (c *QuestionController) HandlePost(ctx *gin.Context) {
 		return
 	}
 
-	createdQuestion, err := service.CreateQuestion(newQuestion.Title, newQuestion.Description, newQuestion.Level, newQuestion.Tests)
+	createdQuestion, err := service.CreateQuestion(newQuestion.Title, newQuestion.Description, newQuestion.Level, newQuestion.Tests, newQuestion.InputTypes, newQuestion.OutputType)
 	if err != nil {
 		if err.Error() == "Question must contain title & description & level & at least one test" {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -76,7 +76,7 @@ func (c *QuestionController) HandlePut(ctx *gin.Context) {
 		return
 	}
 
-	updatedQuestionResult, err := service.UpdateQuestion(id, updatedQuestion.Title, updatedQuestion.Description, updatedQuestion.Level, updatedQuestion.Tests)
+	updatedQuestionResult, err := service.UpdateQuestion(id, updatedQuestion.Title, updatedQuestion.Description, updatedQuestion.Level, updatedQuestion.Tests, updatedQuestion.InputTypes, updatedQuestion.OutputType)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

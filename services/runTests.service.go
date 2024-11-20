@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
 	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -52,7 +51,7 @@ func findErrorLine(output string) string {
 		if re.MatchString(line) {
 			errorRe := regexp.MustCompile(`(\w+Error:.*)`)
 			match := errorRe.FindString(line)
-			if match != "" {
+			if match != "" && !strings.HasPrefix(match, "AssertionError:") {
 				return match
 			}
 		}
@@ -182,6 +181,7 @@ func runTestJava(funcCode, input, expectedOutput string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	funcName, err := extractFunNameJava(funcCode, modifier)
 	if err != nil {
 		return "", err

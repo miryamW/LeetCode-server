@@ -2,39 +2,43 @@ version: '3.8'
 
 services:
   mongo:
-    image: mongo:latest 
+    image: mongo:latest
     container_name: mongodb
     ports:
-      - "27017:27017"  
+      - "27017:27017"
     volumes:
-      - mongo_data:/data/db 
+      - mongo_data:/data/db
+    restart: always
 
   server:
-    image: miryamw/leetcode-server:latest 
+    image: miryamw/leetcode-server:latest
     container_name: leetcode-server
+    volumes:
+      - ~/.kube/:/root/.kube:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - DATABASE_URL=${DATABASE_URL}  
+      - DATABASE_URL=mongodb://mongodb:27017
       - DATABASE_NAME=${DATABASE_NAME}
       - COLLECTION_NAME=${COLLECTION_NAME}
+      - KUBECONFIG=/root/.kube/config
     ports:
-      - "8080:8080"  
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock  
-    command: ["./server"] 
-    restart: always  
+      - "8080:8080"
+    restart: always
+    depends_on:
+      - mongo  # Make sure MongoDB starts first
 
   client:
-    image: miryamw/leetcode-client:latest  
+    image: miryamw/leetcode-client:latest
     container_name: leetcode-client
     environment:
-      - SERVER_URL=http://leetcode-server:8080  
+      - SERVER_URL=http://leetcode-server:8080
     depends_on:
-      - server  
+      - server  # Ensure server starts before client
     ports:
-      - "3000:3000"  
+      - "3000:3000"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock  
-    restart: always 
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
 
 volumes:
   mongo_data:

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -34,7 +33,7 @@ func Init() {
 	questionCollection = client.Database(dbName).Collection(dbCollection)
 }
 
-func CreateQuestion(title, description string, level int, tests []models.Test) (*mongo.InsertOneResult, error) {
+func CreateQuestion(title, description string, level int, tests []models.Test, inputTypes string, outputType string) (*mongo.InsertOneResult, error) {
 	if(title == "" || description == "" ||level==0 ||len(tests) == 0){
 		return nil, fmt.Errorf("Question must contain title & description & level & at least one test")
 	}
@@ -43,6 +42,8 @@ func CreateQuestion(title, description string, level int, tests []models.Test) (
 			Description: description,
 			Level:       level,
 			Tests:       tests,
+			InputTypes: inputTypes,
+			OutputType: outputType,
 	}
 
 	result, err := questionCollection.InsertOne(context.Background(), question)
@@ -89,7 +90,7 @@ func GetAllQuestions() ([]models.Question, error) {
 	return questions, nil
 }
 
-func UpdateQuestion(id string, title, description string, level int, tests []models.Test) (*mongo.UpdateResult, error) {
+func UpdateQuestion(id string, title, description string, level int, tests []models.Test, inputTypes string, outputType string) (*mongo.UpdateResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
 			return nil, err
@@ -101,6 +102,8 @@ func UpdateQuestion(id string, title, description string, level int, tests []mod
 					"description": description,
 					"level":       level,
 					"tests":       tests,
+					"inputTypes":  inputTypes,
+					"outputType":  outputType,
 			},
 	}
 

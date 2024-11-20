@@ -25,13 +25,26 @@ jobs:
         username:  ${{ secrets.DOCKER_USERNAME }}
         password:  ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Build Docker image
+    - name: Build Docker image for leetcode-server
       run: |
         docker build -t ${{ secrets.DOCKER_USERNAME }}/leetcode-server:latest . 
 
-    - name: Push Docker image to Docker Hub
+    - name: Push Docker image to Docker Hub for leetcode-server
       run: |
-        docker push ${{ secrets.DOCKER_USERNAME }}/leetcode-server:latest 
-      
+        docker push ${{ secrets.DOCKER_USERNAME }}/leetcode-server:latest
 
+    - name: Build Docker image for Java
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/java-server:latest -f tests-images/java/Dockerfile .
 
+    - name: Push Docker image to Docker Hub for Java
+      run: |
+        docker push ${{ secrets.DOCKER_USERNAME }}/java-server:latest
+
+    - name: Build Docker image for Python
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/python-server:latest -f tests-images/python/Dockerfile .
+
+    - name: Push Docker image to Docker Hub for Python
+      run: |
+        docker push ${{ secrets.DOCKER_USERNAME }}/python-server:latest
