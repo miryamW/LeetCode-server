@@ -148,22 +148,23 @@ func convertInputOutputArray(input string) (string, error) {
 }
 
 func runTestJava(funcCode, input, expectedOutput string) (string, error) {
-	err := os.MkdirAll("src/main/java", 0755)
+	dirName := "src" +  uuid.New().String()
+	err := os.MkdirAll(dirName + "/main/java", 0755)
 	if err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
-	err = os.MkdirAll("src/test/java", 0755)
+	err = os.MkdirAll(dirName + "/test/java", 0755)
 	if err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 	defer func() {
-		err := os.RemoveAll("src")
+		err := os.RemoveAll(dirName)
 		if err != nil {
 			fmt.Printf("failed to remove directory: %v\n", err)
 		}
 	}()
 
-	_, err = createTempFile(funcCode, "src/main/java/Main", "java")
+	_, err = createTempFile(funcCode, dirName + "/main/java/Main", "java")
 	if err != nil {
 		return "", err
 	}
@@ -219,7 +220,7 @@ public class MainTest {
 	}
 }`, modifier, funcName, convertedInput, assert, convertedOutput, expectedOutput, print)
 
-	_, err = createTempFile(testCode, "src/test/java/MainTest", "java")
+	_, err = createTempFile(testCode, dirName + "/test/java/MainTest", "java")
 	if err != nil {
 		return "", err
 	}
@@ -281,7 +282,7 @@ public class MainTest {
 		time.Sleep(5 * time.Second)
 	}
 
-	cmd := exec.Command("kubectl", "cp", "/home/miryam/LeetCode-server/src", podName+":/app/src/")
+	cmd := exec.Command("kubectl", "cp", dirName, podName+":/app/src/")
 	err = cmd.Run()
 	if err != nil {
 		log.Fatalf("Failed to copy files: %v", err)
@@ -298,12 +299,13 @@ public class MainTest {
 }
 
 func runTestPython(funcCode, input, expectedOutput string) (string, error) {
-	err := os.MkdirAll("my_tests", 0755)
+	dirName := "my_tests" + uuid.New().String()
+	err := os.MkdirAll(dirName, 0755)
 	if err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 	defer func() {
-		err := os.RemoveAll("my_tests")
+		err := os.RemoveAll(dirName)
 		if err != nil {
 			fmt.Printf("failed to remove directory: %v\n", err)
 		}
@@ -313,7 +315,7 @@ func runTestPython(funcCode, input, expectedOutput string) (string, error) {
 		return "", err
 	}
 
-	_, err = createTempFile(funcCode, "my_tests/func", "py")
+	_, err = createTempFile(funcCode, dirName + "/func", "py")
 	if err != nil {
 		return "", err
 	}
@@ -326,7 +328,7 @@ def test():
 	assert result == %s, f"Expected %s but got {result}"
 `, funcName, input, expectedOutput, expectedOutput)
 
-	_, err = createTempFile(testCode, "my_tests/test_func", "py")
+	_, err = createTempFile(testCode, dirName + "/test_func", "py")
 	if err != nil {
 		return "", err
 	}
@@ -388,7 +390,7 @@ for {
 	time.Sleep(5 * time.Second) 
 }
 
-cmd := exec.Command("kubectl", "cp", "/home/miryam/LeetCode-server/my_tests", podName+":/app/my_tests/")
+cmd := exec.Command("kubectl", "cp", dirName, podName+":/app/my_tests/")
 err = cmd.Run()
 if err != nil {
 	log.Fatalf("Failed to copy files: %v", err)

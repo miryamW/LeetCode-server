@@ -9,20 +9,32 @@ services:
     volumes:
       - mongo_data:/data/db 
 
-  app:
-    build: .
-    container_name: my_app
+  server:
+    image: miryamw/leetcode-server:latest 
+    container_name: leetcode-server
     environment:
       - DATABASE_URL=${DATABASE_URL}  
       - DATABASE_NAME=${DATABASE_NAME}
       - COLLECTION_NAME=${COLLECTION_NAME}
-    depends_on:
-      - mongo 
     ports:
-      - "8080:8080" 
+      - "8080:8080"  
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock 
-    user: "root"
+      - /var/run/docker.sock:/var/run/docker.sock  
+    command: ["./server"] 
+    restart: always  
+
+  client:
+    image: miryamw/leetcode-client:latest  
+    container_name: leetcode-client
+    environment:
+      - SERVER_URL=http://leetcode-server:8080  
+    depends_on:
+      - server  
+    ports:
+      - "3000:3000"  
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  
+    restart: always 
 
 volumes:
   mongo_data:

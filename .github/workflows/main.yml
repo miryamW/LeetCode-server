@@ -1,4 +1,4 @@
-name: Docker Compose CI/CD
+name: Server CI/CD
 
 on:
   push:
@@ -25,11 +25,13 @@ jobs:
         username:  ${{ secrets.DOCKER_USERNAME }}
         password:  ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Set up Docker Compose
-      run: sudo apt-get update && sudo apt-get install docker-compose -y
+    - name: Build Docker image
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/leetcode-server:latest . 
 
-    - name: Build and push Docker images
-      run: docker-compose -f docker-compose.yml build
+    - name: Push Docker image to Docker Hub
+      run: |
+        docker push ${{ secrets.DOCKER_USERNAME }}/leetcode-server:latest 
+      
 
-    - name: Start services
-      run: docker-compose -f docker-compose.yml up -d
+
