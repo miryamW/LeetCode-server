@@ -18,31 +18,26 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// createTempFile creates a temporary file with the given content, prefix, and extension.
+// It returns the file name and any error encountered during file creation.
 func createTempFile(content, prefix, ext string) (string, error) {
 	fileName := prefix + "." + ext
 	file, err := os.Create(fileName)
 	if err != nil {
-		return "", fmt.Errorf("Error creating file: %v", err)
+		return "", fmt.Errorf("error creating file: %v", err)
 	}
 	defer file.Close()
 
 	if _, err := file.Write([]byte(content)); err != nil {
-		return "", fmt.Errorf("Error writing to file: %v", err)
+		return "", fmt.Errorf("error writing to file: %v", err)
 	}
 
 	return file.Name(), nil
 }
 
-func extractFuncNamePython(funcCode string) (string, error) {
-	re := regexp.MustCompile(`def\s+(\w+)\s*\(.*\)\s*:`)
-	matches := re.FindStringSubmatch(funcCode)
-	if len(matches) < 1 {
-		return "", fmt.Errorf("Could not find function name in the provided code")
-	}
-	return matches[1], nil
-}
-
-func findErrorLine(output string) string {
+// findErrorPython processes the output of a Python test and finds any error messages.
+// It searches for Python error messages and returns the first match that is not an "AssertionError".
+func findErrorPython(output string) string {
 	lines := strings.Split(output, "\n")
 	re := regexp.MustCompile(`\w+Error:.*$`)
 
@@ -52,7 +47,7 @@ func findErrorLine(output string) string {
 			errorRe := regexp.MustCompile(`(\w+Error:.*)`)
 			match := errorRe.FindString(line)
 			if match != "" && !strings.HasPrefix(match, "AssertionError:") {
-				return match
+				return fmt.Sprint("error - ",match)
 			}
 		}
 	}
@@ -60,7 +55,39 @@ func findErrorLine(output string) string {
 	return ""
 }
 
-func extractFunNameJava(funcCode string, returnType string) (string, error) {
+// findErrorJava processes the output of a Java test and finds any error messages.
+// It returns the compilation or runtime error message found in the Java output.
+func findErrorJava(output string) string {
+	compilationErrorRegex := regexp.MustCompile(`/app/src/main/java/Main\.java:\[(\d+),(\d+)\] (.*)`)
+	runtimeErrorRegex := regexp.MustCompile(`java\.lang\.\S+: (.+)\n\s+at .*\((.*):(\d+)\)`)
+	compilationErrorMatch := compilationErrorRegex.FindStringSubmatch(output)
+	runtimeErrorMatch := runtimeErrorRegex.FindStringSubmatch(output)
+
+	if len(compilationErrorMatch) > 1 {
+			line := compilationErrorMatch[1]
+			column := compilationErrorMatch[2]
+			errorMessage := compilationErrorMatch[3]
+			return fmt.Sprintf("compilation error - [%s,%s] %s", line, column, errorMessage)
+  } else if len(runtimeErrorMatch) > 0 {
+			return fmt.Sprintf("run time error - %s", runtimeErrorMatch[1])
+  }
+	return ""
+}
+
+// extractFuncNamePython extracts the function name from a Python function's code.
+// It returns the function name or an error if the name cannot be found.
+func extractFuncNamePython(funcCode string) (string, error) {
+	re := regexp.MustCompile(`def\s+(\w+)\s*\(.*\)\s*:`)
+	matches := re.FindStringSubmatch(funcCode)
+	if len(matches) < 1 {
+		return "", fmt.Errorf("Could not find function name in the provided code")
+	}
+	return matches[1], nil
+}
+
+// extractFuncNameJava extracts the function name from a Java function's code based on the return type.
+// It returns the function name or an error if the name cannot be found.
+func extractFuncNameJava(funcCode string, returnType string) (string, error) {
 	re := regexp.MustCompile(fmt.Sprintf(`%s\s+(\w+)\s*\(`, regexp.QuoteMeta(returnType)))
 	matches := re.FindStringSubmatch(funcCode)
 	if len(matches) < 1{
@@ -70,7 +97,9 @@ func extractFunNameJava(funcCode string, returnType string) (string, error) {
 	return matches[1], nil
 }
 
-func extractModifier(funcCode string) (string, error) {
+// extractReturnType extracts the return type (e.g., int, string) from the function code.
+// It returns the return type or an error if no valid return type is found.
+func extractReturnType(funcCode string) (string, error) {
 	funcCode = regexp.MustCompile(`\s+`).ReplaceAllString(funcCode, " ")
 
 	reStatic := regexp.MustCompile(`public\s+static\s+([a-zA-Z0-9\[\]]+)\s+\w+\(`)
@@ -88,6 +117,8 @@ func extractModifier(funcCode string) (string, error) {
 	return "", fmt.Errorf("Could not find return type in the code")
 }
 
+// convertInputOutputArray converts the input and output array or matrix string representations into Java array syntax.
+// It returns the converted string or an error if the conversion fails.
 func convertInputOutputArray(input string) (string, error) {
 	arrayPattern := regexp.MustCompile(`\[\s*(\d+(\.\d+)?|"[^"]*")(,\s*(\d+(\.\d+)?|"[^"]*"))*\s*\]`)
 	matrixPattern := regexp.MustCompile(`\[\s*\[\s*(\d+(\.\d+)?|"[^"]*")(,\s*(\d+(\.\d+)?|"[^"]*"))*\s*\](,\s*\[\s*(\d+(\.\d+)?|"[^"]*")(,\s*(\d+(\.\d+)?|"[^"]*"))*\s*\])*\s*\]`)
@@ -146,16 +177,20 @@ func convertInputOutputArray(input string) (string, error) {
 	return result, nil
 }
 
+// runTestJava runs a Java test based on the provided function code, input, and expected output.
+// It prepares the environment, creates necessary files, and runs the test in a Kubernetes pod.
 func runTestJava(funcCode, input, expectedOutput string) (string, error) {
 	dirName := "src" +  uuid.New().String()
 	err := os.MkdirAll(dirName + "/main/java", 0755)
 	if err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
+
 	err = os.MkdirAll(dirName + "/test/java", 0755)
 	if err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
+
 	defer func() {
 		err := os.RemoveAll(dirName)
 		if err != nil {
@@ -177,12 +212,12 @@ func runTestJava(funcCode, input, expectedOutput string) (string, error) {
 		return "", err
 	}
 
-	modifier, err := extractModifier(funcCode)
+	modifier, err := extractReturnType(funcCode)
 	if err != nil {
 		return "", err
 	}
 
-	funcName, err := extractFunNameJava(funcCode, modifier)
+	funcName, err := extractFuncNameJava(funcCode, modifier)
 	if err != nil {
 		return "", err
 	}
@@ -198,7 +233,7 @@ func runTestJava(funcCode, input, expectedOutput string) (string, error) {
 	}
 
 	testCode := fmt.Sprintf(
-		`import java.util.Arrays;
+`import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -227,7 +262,7 @@ public class MainTest {
 
 	kubeconfig := os.Getenv("KUBECONFIG")
 	if kubeconfig == "" {
-		kubeconfig = "/home/miryam/.minikube/config/config"
+		return "", fmt.Errorf("error","cannot connect to k8s KUBECONFIG is not exist")
 	}
 
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -239,6 +274,7 @@ public class MainTest {
 	if err != nil {
 		log.Fatalf("Failed to create clientset: %v", err)
 	}
+
 	podName := "java-test-pod" + uuid.New().String()
 
 	pod := &corev1.Pod{
@@ -295,21 +331,26 @@ public class MainTest {
 	if err != nil {
 		log.Fatalf("Failed to delete pod: %v", err)
 	}
+
 	return string(output), nil
 }
 
+// runTestPython runs a Python test based on the provided function code, input, and expected output.
+// It prepares the environment, creates necessary files, and runs the test in a Kubernetes pod
 func runTestPython(funcCode, input, expectedOutput string) (string, error) {
 	dirName := "my_tests" + uuid.New().String()
 	err := os.MkdirAll(dirName, 0755)
 	if err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
+
 	defer func() {
 		err := os.RemoveAll(dirName)
 		if err != nil {
 			fmt.Printf("failed to remove directory: %v\n", err)
 		}
 	}()
+
 	funcName, err := extractFuncNamePython(funcCode)
 	if err != nil {
 		return "", err
@@ -334,187 +375,167 @@ def test():
 	}
 
 	kubeconfig := os.Getenv("KUBECONFIG")
-if kubeconfig == "" {
-	kubeconfig = "/home/miryam/.minikube/config/config" 
+  if kubeconfig == "" {
+		return "", fmt.Errorf("error","cannot connect to k8s KUBECONFIG is not exist")
+  }
+
+  config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+  if err != nil {
+	  log.Fatalf("Failed to build kubeconfig: %v", err)
+  }
+
+  clientset, err := kubernetes.NewForConfig(config)
+  if err != nil {
+	  log.Fatalf("Failed to create clientset: %v", err)
+  }
+  podName := "python-test-pod" + uuid.New().String()
+
+  pod := &corev1.Pod{
+	  ObjectMeta: metav1.ObjectMeta{
+		  Name: podName,
+	  },
+	  Spec: corev1.PodSpec{
+		  Containers: []corev1.Container{
+			  {
+				  Name:  "python-test",
+				  Image: "miryamw/python-test:latest",
+				  Resources: corev1.ResourceRequirements{
+					  Requests: corev1.ResourceList{
+						  "memory": resource.MustParse("512Mi"),
+						  "cpu":    resource.MustParse("500m"), 
+					  },
+					  Limits: corev1.ResourceList{
+						  "memory": resource.MustParse("1Gi"), 
+						  "cpu":    resource.MustParse("1"),   
+					  },
+				  },
+			  },
+		  },
+		  RestartPolicy: corev1.RestartPolicyNever, 
+	  },
+  }
+
+  _, err = clientset.CoreV1().Pods("default").Create(context.TODO(), pod, metav1.CreateOptions{})
+  if err != nil {
+	  log.Fatalf("Failed to create pod: %v", err)
+  }
+
+  for {
+	  podStatus, err := clientset.CoreV1().Pods("default").Get(context.TODO(), podName, metav1.GetOptions{})
+	  if err != nil {
+		  log.Fatalf("Failed to get pod status: %v", err)
+	  }
+	  if podStatus.Status.Phase == corev1.PodRunning {
+		  break
+	  }
+	  time.Sleep(5 * time.Second) 
+  }
+
+  cmd := exec.Command("kubectl", "cp", dirName, podName+":/app/my_tests/")
+  err = cmd.Run()
+  if err != nil {
+	  log.Fatalf("Failed to copy files: %v", err)
+  }
+
+  cmd = exec.Command("kubectl", "exec", "-it", podName, "--", "pytest", "/app/my_tests")
+  output, _ := cmd.CombinedOutput()
+
+  err = clientset.CoreV1().Pods("default").Delete(context.TODO(), podName, metav1.DeleteOptions{})
+  if err != nil {
+	  log.Fatalf("Failed to delete pod: %v", err)
+  }
+
+  return string(output), nil
 }
 
-config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-if err != nil {
-	log.Fatalf("Failed to build kubeconfig: %v", err)
-}
+type runTest func(string, string, string) (string, error)
+type findError func(output string) string 
 
-clientset, err := kubernetes.NewForConfig(config)
-if err != nil {
-	log.Fatalf("Failed to create clientset: %v", err)
-}
-podName := "python-test-pod" + uuid.New().String()
-
-pod := &corev1.Pod{
-	ObjectMeta: metav1.ObjectMeta{
-		Name: podName,
-	},
-	Spec: corev1.PodSpec{
-		Containers: []corev1.Container{
-			{
-				Name:  "python-test",
-				Image: "miryamw/python-test:latest",
-				Resources: corev1.ResourceRequirements{
-					Requests: corev1.ResourceList{
-						"memory": resource.MustParse("512Mi"),
-						"cpu":    resource.MustParse("500m"), 
-					},
-					Limits: corev1.ResourceList{
-						"memory": resource.MustParse("1Gi"), 
-						"cpu":    resource.MustParse("1"),   
-					},
-				},
-			},
-		},
-		RestartPolicy: corev1.RestartPolicyNever, 
-	},
-}
-
-_, err = clientset.CoreV1().Pods("default").Create(context.TODO(), pod, metav1.CreateOptions{})
-if err != nil {
-	log.Fatalf("Failed to create pod: %v", err)
-}
-
-for {
-	podStatus, err := clientset.CoreV1().Pods("default").Get(context.TODO(), podName, metav1.GetOptions{})
-	if err != nil {
-		log.Fatalf("Failed to get pod status: %v", err)
-	}
-	if podStatus.Status.Phase == corev1.PodRunning {
-		break
-	}
-	time.Sleep(5 * time.Second) 
-}
-
-cmd := exec.Command("kubectl", "cp", dirName, podName+":/app/my_tests/")
-err = cmd.Run()
-if err != nil {
-	log.Fatalf("Failed to copy files: %v", err)
-}
-
-cmd = exec.Command("kubectl", "exec", "-it", podName, "--", "pytest", "/app/my_tests")
-output, _ := cmd.CombinedOutput()
-
-err = clientset.CoreV1().Pods("default").Delete(context.TODO(), podName, metav1.DeleteOptions{})
-if err != nil {
-	log.Fatalf("Failed to delete pod: %v", err)
-}
-return string(output), nil
-}
-
+// The RunTests function executes a series of tests for a given function code in a specified programming language,
+// comparing the actual output with the expected output. 
+//It returns the results, including success/failure status, error messages, and any discrepancies found during the tests.
 func RunTests(funcCode string, questionId string, language string) ([]models.TestResult, error) {
+	runTestMap := map[string]runTest{
+		"java":     runTestJava,
+		"python": runTestPython,
+	}
+
+	findErrorMap := map[string]findError{
+		"java":   findErrorJava,
+		"python": findErrorPython,
+	}
+	
 	question, err := GetQuestionByID(questionId)
 	if err != nil {
-			return nil, fmt.Errorf("Error fetching question: %v", err)
+			return nil, fmt.Errorf("error fetching question: %v", err)
 	}
 
 	var results []models.TestResult
 	failureRegex := regexp.MustCompile(`got (\S.*\S?)`)
 	failedKeywords := []string{"failed", "FAILED"}
-	compilationErrorRegex := regexp.MustCompile(`/app/src/main/java/Main\.java:\[(\d+),(\d+)\] (.*)`)
-	runtimeErrorRegex := regexp.MustCompile(`java\.lang\.\S+: (.+)\n\s+at .*\((.*):(\d+)\)`)
 
+	//runAllTests
 	for i, test := range question.Tests {
-			var out string
-			var err error
-			if language == "java" {
-					out, err = runTestJava(funcCode, test.Input, test.ExpectedOutput)
-			} else {
-					out, err = runTestPython(funcCode, test.Input, test.ExpectedOutput)
-			}
-			passed := true
-			var comments string
-			output := ""
+			out, err := runTestMap[language] (funcCode, test.Input, test.ExpectedOutput)
 			var errors []models.ErrorLine
-
+			var comments string
+			passed := true
+			output := ""
 			if err != nil {
-					passed = false
-					comments = err.Error()
+				passed = false
+				comments = err.Error()
 			} else {
-					if language == "java" {
-							compilationErrorMatch := compilationErrorRegex.FindStringSubmatch(out)
-							if len(compilationErrorMatch) > 1 {
-									passed = false
-									line := compilationErrorMatch[1]
-									column := compilationErrorMatch[2]
-									errorMessage := compilationErrorMatch[3]
-									comments = fmt.Sprintf("compilation error - [%s,%s] %s", line, column, errorMessage)
-									errors = append(errors, models.ErrorLine{
-											Line:    line,
-											Message: errorMessage,
-									})
-							}
-					}
-
-					if language == "python" {
-							errorMessage := findErrorLine(out)
-							if errorMessage != "" {
-									passed = false
-									comments = "error - " + errorMessage
-							}
-					}
-
-					if comments == "" {
-							runtimeErrorMatch := runtimeErrorRegex.FindStringSubmatch(out)
-							if len(runtimeErrorMatch) > 0 {
-									passed = false
-									comments = fmt.Sprintf("run time error - %s at", runtimeErrorMatch[1])
-									errors = append(errors, models.ErrorLine{
-											Line:    runtimeErrorMatch[3],
-											Message: runtimeErrorMatch[1],
-									})
-							} else {
-									for _, keyword := range failedKeywords {
-											if strings.Contains(strings.ToLower(out), keyword) {
-													passed = false
-													break
-											}
-									}
-
-									allMatches := failureRegex.FindAllStringSubmatch(out, -1)
-									if len(allMatches) >= 2 {
-											match := allMatches[1]
-											if match != nil {
-													parts := strings.SplitN(match[0], " ", 2)
-													if len(parts) > 1 {
-															output = parts[1]
-													}
-													comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
-											} else {
-													comments = fmt.Sprintf("Test failed for input %s", test.Input)
-											}
-									} else if len(allMatches) == 1 {
-											match := allMatches[0]
-											if match != nil {
-													parts := strings.SplitN(match[0], " ", 2)
-													if len(parts) > 1 {
-															output = parts[1]
-													}
-													comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
-											} else {
-													comments = fmt.Sprintf("Test failed for input %s", test.Input)
-											}
-									}
-							}
-					}
+				//find compilation / run time errors
+				errorMessage := findErrorMap[language](out)
+				if errorMessage != "" {
+					passed = false
+					comments = errorMessage
+				}
 			}
-			if output == "" && passed {
-					output = test.ExpectedOutput
-			}
-			results = append(results, models.TestResult{
-					TestNumber:     i + 1,
-					Passed:         passed,
-					Comments:       comments,
-					Input:          test.Input,
-					ExpectedOutput: test.ExpectedOutput,
-					Output:         output,
-					Errors:         errors,
-			})
+			if comments == "" {
+				//find another failures
+				for _, keyword := range failedKeywords {
+					if strings.Contains(strings.ToLower(out), keyword) {
+						passed = false
+						break
+				  }
+				}
+				var match []string
+				//find the wronע output
+				allMatches := failureRegex.FindAllStringSubmatch(out, -1)
+				if len(allMatches) >= 2 {
+					match = allMatches[1]
+				} else if len(allMatches) == 1 {
+					match = allMatches[0]
+				}
+				if match != nil {
+					parts := strings.SplitN(match[0], " ", 2)
+					if len(parts) > 1 {
+						output = parts[1]
+					}
+					comments = fmt.Sprintf("Test failed for input %s: output indicates failure: %s", test.Input, match[0])
+				} else if passed == false{
+					comments = fmt.Sprintf("Test failed for input %s", test.Input)
+			  }
+		  }
+
+			//put the correct output
+	    if output == "" && passed {
+			  output = test.ExpectedOutput
+	    }
+
+			//append to results array
+	    results = append(results, models.TestResult{
+			  TestNumber:     i + 1,
+			  Passed:         passed,
+			  Comments:       comments,
+			  Input:          test.Input,
+			  ExpectedOutput: test.ExpectedOutput,
+			  Output:         output,
+			  Errors:         errors,
+		  })
 	}
+
 	return results, nil
 }
 

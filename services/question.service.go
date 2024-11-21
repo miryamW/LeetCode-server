@@ -15,6 +15,7 @@ import (
 
 var questionCollection *mongo.Collection
 
+// Init initializes the database connection using environment variables and sets up the questionCollection.
 func Init() {
 	godotenv.Load()
 	dbUrl := os.Getenv("DATABASE_URL")
@@ -33,6 +34,8 @@ func Init() {
 	questionCollection = client.Database(dbName).Collection(dbCollection)
 }
 
+// CreateQuestion inserts a new question into the database. It requires a title, description, level, tests, input types, and output type.
+// It returns the result of the insertion and any errors encountered.
 func CreateQuestion(title, description string, level int, tests []models.Test, inputTypes string, outputType string) (*mongo.InsertOneResult, error) {
 	if(title == "" || description == "" ||level==0 ||len(tests) == 0){
 		return nil, fmt.Errorf("Question must contain title & description & level & at least one test")
@@ -53,6 +56,7 @@ func CreateQuestion(title, description string, level int, tests []models.Test, i
 	return result, nil
 }
 
+// GetQuestionByID retrieves a question by its ID. It returns the question object and any errors encountered.
 func GetQuestionByID(id string) (*models.Question, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -67,6 +71,7 @@ func GetQuestionByID(id string) (*models.Question, error) {
 	return &question, nil
 }
 
+// GetAllQuestions retrieves all questions from the database and returns them in a slice. It returns any errors encountered during the operation.
 func GetAllQuestions() ([]models.Question, error) {
 	cursor, err := questionCollection.Find(context.Background(), bson.M{})
 	if err != nil {
@@ -90,6 +95,8 @@ func GetAllQuestions() ([]models.Question, error) {
 	return questions, nil
 }
 
+// UpdateQuestion updates an existing question based on the provided ID. It updates the question's title, description, level, tests, input types, and output type.
+// It returns the result of the update operation and any errors encountered.
 func UpdateQuestion(id string, title, description string, level int, tests []models.Test, inputTypes string, outputType string) (*mongo.UpdateResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -115,6 +122,7 @@ func UpdateQuestion(id string, title, description string, level int, tests []mod
 	return result, nil
 }
 
+// DeleteQuestion deletes a question by its ID. It returns the result of the deletion and any errors encountered.
 func DeleteQuestion(id string) (*mongo.DeleteResult, error) {
 	questionID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
