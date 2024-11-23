@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project implements a system similar to Leetcode.com, allowing users to create, edit, delete, read, and test coding questions. The system is built with a backend API server written in Go using the Gin framework and a frontend built with Nuxt.js.
+This project implements a system similar to Leetcode.com, allowing users to create, edit, delete, read, and test coding questions - supporting coding in the languages python & java. The system is built with a backend API server written in Go using the Gin framework and a frontend built with Nuxt.js.
 
 ## Features
 

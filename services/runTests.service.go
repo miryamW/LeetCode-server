@@ -248,12 +248,12 @@ public class MainTest {
 					%s result = main.%s(%s);
 					%s(%s, result);
 			} catch (AssertionError e) {
-					System.out.print("Expected %s but got ");
+					System.out.print("Expected but got ");
 					%s
 					throw e; 
 			}
 	}
-}`, modifier, funcName, convertedInput, assert, convertedOutput, expectedOutput, print)
+}`, modifier, funcName, convertedInput, assert, convertedOutput, print)
 
 	_, err = createTempFile(testCode, dirName + "/test/java/MainTest", "java")
 	if err != nil {
@@ -366,8 +366,8 @@ from func import *
 
 def test():
 	result = %s(%s)
-	assert result == %s, f"Expected %s but got {result}"
-`, funcName, input, expectedOutput, expectedOutput)
+	assert result == %s, f"Expected but got {result}"
+`, funcName, input, expectedOutput)
 
 	_, err = createTempFile(testCode, dirName + "/test_func", "py")
 	if err != nil {

@@ -14,10 +14,10 @@ services:
     image: miryamw/leetcode-server:latest
     container_name: leetcode-server
     volumes:
-      - ~/.kube/:/root/.kube:ro
+      - ${KUBE_PATH}:/root/.kube:ro
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - DATABASE_URL=mongodb://mongodb:27017
+      - DATABASE_URL=${DATABASE_URL}
       - DATABASE_NAME=${DATABASE_NAME}
       - COLLECTION_NAME=${COLLECTION_NAME}
       - KUBECONFIG=/root/.kube/config
@@ -30,8 +30,6 @@ services:
   client:
     image: miryamw/leetcode-client:latest
     container_name: leetcode-client
-    environment:
-      - SERVER_URL=http://leetcode-server:8080
     depends_on:
       - server  # Ensure server starts before client
     ports:
