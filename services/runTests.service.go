@@ -117,6 +117,31 @@ func extractReturnType(funcCode string) (string, error) {
 	return "", fmt.Errorf("Could not find return type in the code")
 }
 
+// Function to capitalize "true" or "false" in a comma-separated string
+func capitalizeBooleans(input string) string {
+	// Split the input string by commas
+	parts := strings.Split(input, ",")
+
+	// Iterate through each part
+	for i, part := range parts {
+		// Trim any whitespace around the part
+		part = strings.TrimSpace(part)
+
+		// Check if the part is "true" or "false"
+		if part == "true" {
+			parts[i] = "True"
+		} else if part == "false" {
+			parts[i] = "False"
+		} else {
+			parts[i] = part
+		}
+	}
+
+	// Join the parts back together with commas
+	return strings.Join(parts, ", ")
+}
+
+
 // convertInputOutputArray converts the input and output array or matrix string representations into Java array syntax.
 // It returns the converted string or an error if the conversion fails.
 func convertInputOutputArray(input string) (string, error) {
@@ -360,6 +385,8 @@ func runTestPython(funcCode, input, expectedOutput string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	formatedInput:= capitalizeBooleans(input)
+	formatedOutput:= capitalizeBooleans(expectedOutput)
 
 	testCode := fmt.Sprintf(`
 from func import *
@@ -367,7 +394,7 @@ from func import *
 def test():
 	result = %s(%s)
 	assert result == %s, f"Expected but got {result}"
-`, funcName, input, expectedOutput)
+`, funcName, formatedInput, formatedOutput)
 
 	_, err = createTempFile(testCode, dirName + "/test_func", "py")
 	if err != nil {
